@@ -1,0 +1,7 @@
+[submodule "multiagent-particle-envs"]
+	path = multiagent-particle-envs
+	url = https://github.com/openai/multiagent-particle-envs
+[submodule "marl/mpe_hierarchy"]
+	path = marl/mpe_hierarchy
+	url = https://github.com/Justin-Yuan/mpe_hierarchy.git
+	branch = master

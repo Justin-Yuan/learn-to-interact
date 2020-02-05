@@ -3,3 +3,11 @@
 
 # Ada Library Information
 *.ali
+
+.DS_Store
+
+# experiment stuff
+*/exps
+*/results
+*/dat
+*archived
