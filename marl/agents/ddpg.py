@@ -31,7 +31,7 @@ class DDPGAgent(object):
 
         # continuous or discrete action (only look at `move` action, assume
         # move and comm space both discrete or continuous)
-        tmp = act_space["move"] if isinstance(act_space, Dict) else act_space
+        tmp = act_space.spaces["move"] if isinstance(act_space, Dict) else act_space
         self.discrete_action = False if isinstance(tmp, Box) else True 
 
         # Exploration noise 
@@ -100,11 +100,11 @@ class DDPGAgent(object):
         if isinstance(x, Dict):
             if key is None: # sum of action space dims
                 return sum([
-                    x[k].n if self.discrete_action else x[k].shape[0]
+                    x.spaces[k].n if self.discrete_action else x.spaces[k].shape[0]
                     for k in x.spaces
                 ])
             elif key in x.spaces:
-                return x[key].n if self.discrete_action else x[key].shape[0]
+                return x.spaces[key].n if self.discrete_action else x.spaces[key].shape[0]
             else:   # key not in action spaces
                 return 0
         else:
@@ -128,7 +128,7 @@ class DDPGAgent(object):
         if self.rnn_policy:
             self.policy_hidden_states = self.policy.init_hidden().expand(batch_size, -1)  
         if self.rnn_critic:
-            self.critic_hidden_states = self.policy.init_hidden().expand(batch_size, -1) 
+            self.critic_hidden_states = self.critic.init_hidden().expand(batch_size, -1) 
 
 
     def compute_q_val(self, vf_in, h_critic=None, target=False):

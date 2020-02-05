@@ -54,8 +54,9 @@ def worker(remote, parent_remote, env_fn_wrappers):
                 raise NotImplementedErrors
     except KeyboardInterrupt:
         print('SubprocVecEnv worker: got KeyboardInterrupt')
-    except:
+    except Exception as e:
         print('Environment runner process failed...')
+        print(e)
     finally:
         for env in envs:
             env.close()
