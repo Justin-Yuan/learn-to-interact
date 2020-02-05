@@ -99,6 +99,8 @@ def parse_args():
     parser.add_argument("--tau", default=0.01, type=float)
     parser.add_argument("--gamma", type=float, default=0.95,
                         help="discount factor")
+    parser.add_argument("--sync_samples", default=False, action='store_true',
+                        help="if to use synchronized samples for each agent training")
     
     # exploration/sampling 
     ## NOTE: episode-wise or transition-wise (per episodes now)
@@ -242,9 +244,16 @@ def run(args):
             maddpg.prep_training(device=config.device)
 
             for _ in range(config.n_updates_per_train):
+                episode_sample = None 
                 for a_i in range(maddpg.nagents):
-                    # each agent can have different collective experience samples
-                    episode_sample = buffer.sample(config.batch_size)
+
+                    if config.sync_samples:
+                        # if not None, reuse episode_sample 
+                        if episode_sample is None:
+                            episode_sample = buffer.sample(config.batch_size)
+                    else:   
+                        # each agent can have different collective experience samples
+                        episode_sample = buffer.sample(config.batch_size)
 
                     # Truncate batch to only filled timesteps
                     max_ep_t = episode_sample.max_t_filled()

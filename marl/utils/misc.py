@@ -1,9 +1,11 @@
 import os
+import gym
 import torch
 import torch.nn.functional as F
 import torch.distributed as dist
 from torch.autograd import Variable
 import numpy as np
+
 
 # https://github.com/ikostrikov/pytorch-ddpg-naf/blob/master/ddpg.py#L11
 def soft_update(target, source, tau):
@@ -90,3 +92,5 @@ def gumbel_softmax(logits, temperature=1.0, hard=False):
         y_hard = onehot_from_logits(y)
         y = (y_hard - y).detach() + y
     return y
+
+

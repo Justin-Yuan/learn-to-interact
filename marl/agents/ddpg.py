@@ -57,12 +57,12 @@ class DDPGAgent(object):
 
         self.policy = Policy(num_in_pol, num_out_pol,
                                  hidden_dim=hidden_dim,
-                                 constrain_out=True,
+                                #  constrain_out=True,
                                  discrete_action=self.discrete_action,
                                  rnn_policy=rnn_policy)
         self.target_policy = Policy(num_in_pol, num_out_pol,
                                  hidden_dim=hidden_dim,
-                                 constrain_out=True,
+                                #  constrain_out=True,
                                  discrete_action=self.discrete_action,
                                  rnn_policy=rnn_policy)
         hard_update(self.target_policy, self.policy)

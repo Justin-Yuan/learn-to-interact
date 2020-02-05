@@ -29,3 +29,10 @@ git submodule update --remote
 ## Notes 
 
 - runner scheme: make_env -> wrap in vec_env -> build runner 
+
+
+
+## Pip install 
+```bash
+cat requirements.txt | xargs -n 1 pip install
+```
