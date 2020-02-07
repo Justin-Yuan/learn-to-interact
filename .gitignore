@@ -11,3 +11,6 @@
 */results
 */dat
 *archived
+*__pycache__
+3rdparty/*
+__MACOSX/*

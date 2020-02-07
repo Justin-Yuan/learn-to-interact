@@ -226,8 +226,8 @@ def restore_experiment(args):
     higher date correspond to more recent experiment of same seeds
     """
     # make resume experiment in new directory
-    exp_dir = [args.restore] 
-    timestamp = datetime.now.strftime("%b-%d-%H-%M")  # till minute
+    exp_dir = [os.path.dirname(args.restore)] 
+    timestamp = datetime.now().strftime("%b-%d-%H-%M")  # till minute
     run_dir = "seed{}_{}_{}".format(str(args.seed), str(timestamp), str(os.getpid()))
     exp_dir.append(run_dir)
 
@@ -246,12 +246,20 @@ def restore_experiment(args):
     with open(save_dir+"/env_config.yaml", "w") as f:
         yaml.dump(env_config, f, default_flow_style=False)
 
-     # combine all configs to 1 namespace
+    # combine all configs to 1 namespace (default)
     args_dict["env_config"] = env_config 
     config = bunch.bunchify(args_dict)
     config.restore_model = args.restore + "/model.ckpt"
     config.restore_exp_state = args.restore +  "/exp_state.pkl"
 
+    # specific overwrites (e.g. longer episodes or total steps)
+    if args.restore_model is not None and os.path.exists(args.restore_model):
+        config.restore_model = args.restore + "/model.ckpt"
+    if args.n_episodes > config.n_episodes:
+        config.n_episodes = args.n_episodes
+    if args.n_env_steps > config.n_env_steps:
+        config.n_env_steps = args.n_env_steps
+    
     # set device 
     use_cuda = config.cuda and torch.cuda.is_available()
     config.device = "cuda" if use_cuda else "cpu"
@@ -283,7 +291,7 @@ def setup_evaluation(args):
     if args.tag is not None and len(args.tag) > 0:
         exp_dir.append("_".join(args.tag))
 
-    timestamp = datetime.now.strftime("%b-%d-%H-%M")  # till minute
+    timestamp = datetime.now().strftime("%b-%d-%H-%M")  # till minute
     run_dir = "seed{}_{}_{}".format(str(args.seed), str(timestamp), str(os.getpid()))
     exp_dir.append(run_dir)
 

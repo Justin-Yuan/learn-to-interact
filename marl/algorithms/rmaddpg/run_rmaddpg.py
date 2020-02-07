@@ -40,6 +40,10 @@ def parse_args():
                         help="Random seed, if 0, do not set seed")
     parser.add_argument("--restore", type=str, default=None,
                         help="directory in which training state and model are loaded")
+    # if specified and not restore, will load model for experiment init
+    # if also restore, will overwrite default path in restore_experiment
+    parser.add_argument("--restore_model", type=str, default=None,
+                        help="file in which model are loaded")
     ## NOTE: episode-wise or transition-wise (per transtion now, easier to log)
     parser.add_argument("--log_interval", default=25000, type=int,
                         help="frequency to log exploration/runner stats")
@@ -172,7 +176,7 @@ def run(args):
                                 2, 1, config.seed)
 
     # NOTE: make learner agent 
-    if is_restore:
+    if is_restore or config.restore_model is not None:
         maddpg = RMADDPG.init_from_save(config.restore_model)
     else:
         maddpg = RMADDPG.init_from_env(
