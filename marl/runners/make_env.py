@@ -14,7 +14,7 @@ communication actions in this array. See environment.py for more details.
 import os 
 import sys 
 mpe_hier_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))    # top level 
-# mpe_hier_path = os.path.join(mpe_hier_path, "mpe_hierarchy")
+mpe_hier_path = os.path.join(mpe_hier_path, "mpe_hierarchy")
 sys.path.insert(1, mpe_hier_path)
 
 # def make_env(scenario_name, benchmark=False, discrete_action=False):
