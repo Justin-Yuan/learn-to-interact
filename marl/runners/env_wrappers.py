@@ -65,7 +65,7 @@ def worker(remote, parent_remote, env_fn_wrappers):
 ######################################## misc 
 def _flatten_obs(obs):
     """ concat observations if possible, otherwise leave unchagned
-    each obs element can be of form:
+    each inner obs element can be of form:
     - np.array (same shape)
     - np.array (different shape)
     - dict of np.array 
@@ -79,7 +79,7 @@ def _flatten_obs(obs):
         for e in ex[1:]
     ])
     if not can_stack:
-        return obs  # [ [dict (D,)]*N ]*B
+        return obs  # [ [(D,)]*N ]*B or [ [dict (D,)]*N ]*B
     else:   # [[(D,)]*N]*B -> (B,N,D)
         return np.stack([np.stack(ob, 0) for ob in obs], 0)
     
