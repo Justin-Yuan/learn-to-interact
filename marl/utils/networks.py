@@ -4,8 +4,7 @@ import torch.nn.functional as F
 
 ############################################ mlp 
 class MLPNetwork(nn.Module):
-    """
-    MLP network (can be used as value or policy)
+    """ MLP network (can be used as value or policy)
     """
     def __init__(self, input_dim, out_dim, hidden_dim=64, nonlin=F.relu,
                  constrain_out=False, norm_in=False, discrete_action=True, 
@@ -62,8 +61,7 @@ class MLPNetwork(nn.Module):
 
 ############################################ rnn 
 class RecurrentNetwork(nn.Module):
-    """
-    RNN, used in policy or value function to tackle partial observability
+    """ RNN, used in policy or value function to tackle partial observability
     """
     def __init__(self, input_dim, out_dim, hidden_dim=64, nonlin=F.relu,
                  constrain_out=False, norm_in=False, discrete_action=True, 
@@ -121,9 +119,184 @@ class RecurrentNetwork(nn.Module):
         return out, h
 
 
+############################################ gcn 
+class GCN(nn.Module):
+    def __init__(self, input_dim, output_dim, hidden_dim=64, nonlin=F.relu,
+                constrain_out=False, norm_in=False, discrete_action=True, 
+                use_head=True, **kwargs):
+        pass 
+
+    def forward(self, nodes, edges, masks=None):
+        pass 
+
+
+
 ############################################ gnn 
 class GraphNetwork(nn.Module):
+    """ Generic graph net. 
+    reference: https://github.com/lrjconan/LanczosNetwork --> GAT model
+    """
     def __init__(self, input_dim, out_dim, hidden_dim=64, nonlin=F.relu,
-                 constrain_out=False, norm_in=True, discrete_action=True, **kwargs): 
-        pass 
+                 constrain_out=False, norm_in=False, discrete_action=True, 
+                 use_head=True, num_edgetype=1, num_layer=2, num_heads=1, 
+                 dropout=0.0, output_level="graph", **kwargs): 
+        """
+        Inputs:
+            input_dim (int): Number of dimensions in input
+            out_dim (int): Number of dimensions in output
+            hidden_dim (int): Number of hidden dimensions
+            nonlin (PyTorch function): Nonlinearity to apply to hidden layers
+        """
+        super(GraphNetwork, self).__init__()
+
+        if norm_in:  # normalize inputs
+            self.in_fn = nn.BatchNorm1d(input_dim)
+            self.in_fn.weight.data.fill_(1)
+            self.in_fn.bias.data.fill_(0)
+        else:
+            self.in_fn = lambda x: x
+
+        self.hidden_dim = hidden_dim
+        self.nonlin = nonlin
+        self.num_layer = num_layer
+        self.num_edgetype = num_edgetype
+        self.dropout = dropout
+        self.output_level = output_level   # graph or node
+
+        # Input embedding layer 
+        self.embedding = nn.Linear(input_dim, hidden_dim)
+
+        # Propagatoin layers 
+        self.dim_list = [hidden_dim]*(self.num_layer+1)
+        self.num_heads = [num_heads]*self.num_layer
+
+        self.filter = nn.ModuleList([
+            nn.ModuleList([
+                nn.ModuleList([
+                    nn.Linear(
+                        dim_list[tt] *
+                        (int(tt == 0) + int(tt != 0) * self.num_heads[tt] * self.num_edgetype),
+                        dim_list[tt + 1], 
+                        bias=False
+                    ) for _ in range(self.num_heads[tt])     # heads 
+                ]) for _ in range(self.num_edgetype)       # edge types
+            ]) for tt in range(self.num_layer)      # layers
+        ])      # 1st layer output concat all heads, so for first layer, input is not concat
+
+        # Attention layers 
+        self.att_net_1 = nn.ModuleList([
+            nn.ModuleList([
+                nn.ModuleList([
+                    nn.Linear(dim_list[tt + 1], 1)
+                    for _ in range(self.num_heads[tt])
+                ]) for _ in range(self.num_edgetype)
+            ]) for tt in range(self.num_layer)
+        ])
+
+        self.att_net_2 = nn.ModuleList([
+            nn.ModuleList([
+                nn.ModuleList([
+                    nn.Linear(dim_list[tt + 1], 1)
+                    for _ in range(self.num_heads[tt])
+                ]) for _ in range(self.num_edgetype)
+            ]) for tt in range(self.num_layer)
+        ])
+
+        # Biases
+        self.state_bias = [
+            [[None] * self.num_heads[tt]] * self.num_edgetype 
+            for tt in range(self.num_layer)
+        ]
+        for tt in range(self.num_layer):
+            for jj in range(self.num_edgetype):
+                for ii in range(self.num_heads[tt]):
+                    self.state_bias[tt][jj][ii] = torch.nn.Parameter(
+                                            torch.zeros(dim_list[tt + 1]))
+                    self.register_parameter('bias_{}_{}_{}'.format(ii, jj, tt),
+                                            self.state_bias[tt][jj][ii])
+
+        # if to use network output as base or head 
+        self.use_head = use_head
+        if use_head:
+            self.output_func = nn.Linear(hidden_dim, out_dim)
+            if constrain_out and not discrete_action:
+                # initialize small to prevent saturation
+                self.output_func.weight.data.uniform_(-3e-3, 3e-3)
+                self.out_fn = F.tanh
+            else:  # logits for discrete action (will softmax later)
+                self.out_fn = lambda x: x
+
+
+    def forward(self, nodes, edges, masks=None, h_in=None):
+        """ stack of gcn layers with attention 
+        Args:
+            - nodes: (B, N, I)
+            - edges: (B, N, N, E)
+            - masks: (B, N)
+        Returns:
+            - out: (B, N, O) or (B, O) depending on `output_level`
+        """
+        batch_size, num_node, _ = node_feat.shape
+        state = self.embedding(nodes)  # (B, N, D)
+
+        for tt in range(self.num_layer):
+            h = []
+
+            # transform & aggregate features
+            for jj in range(self.num_edgetype):
+                for ii in range(self.num_heads[tt]):
+                    
+                    # transformed features
+                    state_head = F.dropout(state, self.dropout, training=self.training)
+                    Wh = self.filter[tt][jj][ii](
+                        state_head.view(batch_size * num_node, -1)
+                    ).view(batch_size, num_node, -1)  # (B, N, D)
+
+                    # attention weights
+                    att_weights_1 = self.att_net_1[tt][jj][ii](Wh)  # (B, N, 1)
+                    att_weights_2 = self.att_net_2[tt][jj][ii](Wh)  # (B, N, 1)
+                    att_weights = att_weights_1 + att_weights_2.transpose(1, 2)  # (B, N, N) dense matrix
+                    att_weights = F.softmax(
+                        F.leaky_relu(att_weights, negative_slope=0.2) + edges[:, :, :, jj],
+                        dim=1)
+                    
+                    # dropout attn weights and features
+                    att_weights = F.dropout(
+                        att_weights, self.dropout, training=self.training)  # (B, N, N)
+                    Wh = F.dropout(Wh, self.dropout, training=self.training)  # (B, N, D)
+
+                    # aggregation step
+                    msg = torch.bmm(att_weights, Wh) + self.state_bias[tt][jj][ii].view(1, 1, -1)
+                    if tt == self.num_layer - 1:
+                        msg = F.elu(msg)
+                    h += [msg]  # (B, N, D)
+
+            # propagation step 
+            if tt == self.num_layer - 1:
+                state = torch.mean(torch.stack(h, dim=0), dim=0)  # (B, N, D), average all heads & edges
+            else:
+                state = torch.cat(h, dim=2)     # (B, N, D * #edge_types * #heads)
+
+        # output
+        out = self.output_func(
+            state.view(batch_size * num_node, -1)
+        ).view(batch_size, num_node, -1)    # (B, N, O)
+        # if output is `graph-level`, out is now (B, N, 1), convert to (B, 1)
+        if self.output_level == "graph":
+            if masks is not None:
+                out = out.squeeze() * masks   # (B, N)
+            out = torch.mean(out, dim=1)    # simple sum, could extend to weighted sum (attention)
+
+        return out 
         
+
+############################################ google graph net 
+
+class GraphNet(nn.Module):
+    def __init__(self):
+        pass 
+
+    def forward(self, nodes, edges, masks=None):
+        pass 
+
+

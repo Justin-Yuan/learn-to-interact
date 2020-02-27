@@ -177,3 +177,75 @@ def log_results(t_env, results, logger, mode="sample",
         
     else:
         raise NotImplementedError("logging option not supported!")
+
+
+
+        
+class KLCoeff(object):
+    def __init__(self, config):
+        # KL Coefficient
+        self._kl_target = config["kl_target"]
+        self._kl_coeff = config["kl_coeff"]
+        
+    def update_kl(self, sampled_kl):
+        if sampled_kl > 2.0 * self._kl_target:
+            self._kl_coeff *= 1.5
+        elif sampled_kl < 0.5 * self._kl_target:
+            self._kl_coeff *= 0.5
+
+    def __call__(self):
+        return self._kl_coeff
+
+
+
+
+
+def discount(x, gamma):
+    return scipy.signal.lfilter([1], [1, -gamma], x[::-1], axis=0)[::-1]
+
+def compute_advantages(use_gae=True):
+    """ normal advantage or generalized advantage estiamate 
+        reference: https://arxiv.org/pdf/1506.02438.pdf
+    """
+    if use_gae:
+        vpred_t = np.concatenate(
+            [rollout[SampleBatch.VF_PREDS],
+             np.array([last_r])])
+        delta_t = (
+            traj[SampleBatch.REWARDS] + gamma * vpred_t[1:] - vpred_t[:-1])
+        # This formula for the gae is 
+        # \hat{A}_t = \delta_t + \gamma\lambda\delta_{t+1} + \cdots + (\gamma\lambda)^{T-t+1}\delta_{T-1}
+        # \delta_t = r_t + \gamma V(s_{t+1})-V(s_t) 
+        traj[Postprocessing.ADVANTAGES] = discount(delta_t, gamma * lambda_)
+        traj[Postprocessing.VALUE_TARGETS] = (
+            traj[Postprocessing.ADVANTAGES] +
+            traj[SampleBatch.VF_PREDS]).copy().astype(np.float32)
+    else:
+        rewards_plus_v = np.concatenate(
+            [rollout[SampleBatch.REWARDS],
+             np.array([last_r])])
+        discounted_returns = discount(rewards_plus_v,
+                                      gamma)[:-1].copy().astype(np.float32)
+
+        if use_critic:
+            traj[Postprocessing.
+                 ADVANTAGES] = discounted_returns - rollout[SampleBatch.
+                                                            VF_PREDS]
+            traj[Postprocessing.VALUE_TARGETS] = discounted_returns
+        else:
+            traj[Postprocessing.ADVANTAGES] = discounted_returns
+            traj[Postprocessing.VALUE_TARGETS] = np.zeros_like(
+                traj[Postprocessing.ADVANTAGES])
+
+    traj[Postprocessing.ADVANTAGES] = traj[
+        Postprocessing.ADVANTAGES].copy().astype(np.float32)
+    return 
+
+
+
+
+def explained_variance_torch(y, pred):
+    y_var = torch.pow(y.std(0), 0.5)
+    diff_var = torch.pow((y - pred).std(0), 0.5)
+    var = max(-1.0, 1.0 - (diff_var / y_var).data)
+    return var

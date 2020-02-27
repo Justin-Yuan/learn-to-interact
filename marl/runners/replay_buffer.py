@@ -65,11 +65,12 @@ class ReplayBuffer(SampleBatch):
 class EpisodeReplayBuffer(EpisodeBatch):
     """ for recurrent policy training, return batch of episodes 
     """
-    def __init__(self, scheme, buffer_size, max_seq_length, device="cpu"):
+    def __init__(self, scheme, buffer_size, max_seq_length, device="cpu", prefill_num=1024):
         super(EpisodeReplayBuffer, self).__init__(scheme, buffer_size, max_seq_length, device=device)
         self.buffer_size = buffer_size  # same as self.batch_size but more explicit
         self.buffer_index = 0
         self.episodes_in_buffer = 0
+        self.prefill_num = prefill_num
 
     def __len__(self):
         return self.episodes_in_buffer
@@ -94,7 +95,7 @@ class EpisodeReplayBuffer(EpisodeBatch):
             self.insert_episode_batch(ep_batch[buffer_left:, :])
 
     def can_sample(self, batch_size):
-        return self.episodes_in_buffer >= 1024 #batch_size
+        return self.episodes_in_buffer >= self.prefill_num #batch_size
 
     def sample(self, batch_size, norm_rews=False):
         """ return EpsideBatch 

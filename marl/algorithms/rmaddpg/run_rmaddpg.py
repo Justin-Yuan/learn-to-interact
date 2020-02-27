@@ -200,7 +200,7 @@ def run(args):
                             2, config.episode_length, device=config.device, t_env=t_env, 
                             is_training=False)
     buffer = EpisodeReplayBuffer(scheme, config.max_buffer_size, 
-                        config.episode_length, device=config.device)
+                        config.episode_length, device=config.device, prefill_num=2*config.batch_size)
    
     # NOTE: start training
     logger.info("Beginning training")
@@ -227,7 +227,7 @@ def run(args):
         # NOTE: logging (exploration/sampling)
         if (estate.last_log_t == 0) or (t_env - estate.last_log_t >= config.log_interval):
             logger.info("\n")
-            logger.info("*** sampling log ***")
+            loggesr.info("*** sampling log ***")
             # timing 
             logger.info("t_env: {} / {}, eps: {} / {}".format(
                 t_env, t_max, episode, config.n_episodes))
