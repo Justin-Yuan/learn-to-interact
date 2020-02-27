@@ -40,13 +40,20 @@ class BaseRunner(object):
     
     def dispatch_observations(self, obs):
         """ rearrange observations to be per agent, convert to Tensor
-            (B,N,D) -> [(B,D)]*N or [ [dict (D,)]*N ]*B -> [dict (B,D)]*N
+            (B,N,D) -> [(B,D)]*N or 
+            [ [(D,)]*N ] -> [(B,D)]*N
+            [ [dict (D,)]*N ]*B -> [dict (B,D)]*N
         """
         if isinstance(obs, np.ndarray):
+            # obs same shape across agents, obs stacked 
             torch_obs = [
                 Variable(torch.Tensor(obs[:, i]), requires_grad=False)
                 for i in range(self.mac.nagents)]
-        else:
+        elif all([isinstance(ob, np.ndarray) for ob in obs]):
+            # each sample obs is np array (different size across agents)
+            pass 
+        elif all([isinstance(ob, dict) for ob in obs]):
+            # each sample obs is dict 
             # each dict key to list of obs subfield arrays
             torch_obs = [defaultdict(list)] * self.mac.nagents  
             for i, b_dicts in enumerate(zip(*obs)): # [ [dict (D,)]*B ]*N
@@ -60,6 +67,9 @@ class BaseRunner(object):
                     for k, obs_list in a_dict.items()
                 } for a_dict in torch_obs
             ]
+        else:
+            pass
+
         return torch_obs
 
 

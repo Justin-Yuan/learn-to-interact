@@ -64,7 +64,11 @@ def worker(remote, parent_remote, env_fn_wrappers):
 
 ######################################## misc 
 def _flatten_obs(obs):
-    """ concat observations if possible, otherwise leave unchagned 
+    """ concat observations if possible, otherwise leave unchagned
+    each obs element can be of form:
+    - np.array (same shape)
+    - np.array (different shape)
+    - dict of np.array 
     """
     assert isinstance(obs, (list, tuple))
     assert len(obs) > 0

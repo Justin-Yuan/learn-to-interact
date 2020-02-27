@@ -227,7 +227,7 @@ def run(args):
         # NOTE: logging (exploration/sampling)
         if (estate.last_log_t == 0) or (t_env - estate.last_log_t >= config.log_interval):
             logger.info("\n")
-            loggesr.info("*** sampling log ***")
+            logger.info("*** sampling log ***")
             # timing 
             logger.info("t_env: {} / {}, eps: {} / {}".format(
                 t_env, t_max, episode, config.n_episodes))
