@@ -45,6 +45,12 @@ def get_sample_scheme(n_agents, obs_spaces, act_spaces):
         # others 
         scheme["reward/{}".format(i)] = {"vshape": (1,)}
         scheme["done/{}".format(i)] = {"vshape": (1,), "dtype": torch.uint8}
+
+        # ppo specific 
+        value_preds
+        retutrns 
+        action log probs
+
     return scheme
 
 
@@ -206,6 +212,7 @@ def discount(x, gamma):
 def compute_advantages(use_gae=True):
     """ normal advantage or generalized advantage estiamate 
         reference: https://arxiv.org/pdf/1506.02438.pdf
+        reference2: https://stackoverflow.com/questions/47970683/vectorize-a-numpy-discount-calculation
     """
     if use_gae:
         vpred_t = np.concatenate(
@@ -240,6 +247,14 @@ def compute_advantages(use_gae=True):
     traj[Postprocessing.ADVANTAGES] = traj[
         Postprocessing.ADVANTAGES].copy().astype(np.float32)
     return 
+
+
+
+def compute_returns():
+    """ normal advantage or generalized advantage estiamate 
+        reference: https://arxiv.org/pdf/1506.02438.pdf
+    """
+    pass
 
 
 

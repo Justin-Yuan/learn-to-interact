@@ -58,7 +58,8 @@ class PPOAgent(object):
         if self.rnn_critic:
             self.critic_hidden_states = self.policy.init_hidden().unsqueeze(0).expand(batch_size, self.n_agents, -1) 
 
-    # def 
+    def evaluate_actions(self, obs, ):
+        return 
 
     def step(self, obs, explore=False):
         """

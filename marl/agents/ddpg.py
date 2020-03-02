@@ -148,6 +148,11 @@ class DDPGAgent(object):
                 h_t = self.critic_hidden_states.clone() # (B,H)
             else:
                 h_t = h_critic.clone()
+
+            # DEBUG 
+            # h_t = torch.zeros_like(h_t)
+            # h_t = h_t.detach()
+
             # rollout 
             for t in range(ts):
                 q_t, h_t = critic(vf_in[:,t], h_t)
@@ -187,6 +192,11 @@ class DDPGAgent(object):
                 h_t = self.policy_hidden_states.clone() # (B,H)
             else:
                 h_t = h_actor.clone()
+
+            # DEBUG 
+            # h_t = torch.zeros_like(h_t)
+            # h_t = h_t.detach()
+
             # rollout 
             for t in range(ts):
                 act_t, h_t = pi(obs[:,t], h_t)  # act_t is dict (B,A)
