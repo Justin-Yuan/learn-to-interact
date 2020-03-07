@@ -131,7 +131,7 @@ class DDPGAgent(object):
             self.critic_hidden_states = self.critic.init_hidden().expand(batch_size, -1) 
 
 
-    def compute_q_val(self, vf_in, h_critic=None, target=False):
+    def compute_value(self, vf_in, h_critic=None, target=False):
         """ training critic forward with specified policy 
         Arguments:
             vf_in: (B,T,K)
@@ -147,7 +147,7 @@ class DDPGAgent(object):
             if h_critic is None:
                 h_t = self.critic_hidden_states.clone() # (B,H)
             else:
-                h_t = h_critic.clone()
+                h_t = h_critic  #.clone()
 
             # DEBUG 
             # h_t = torch.zeros_like(h_t)
@@ -191,7 +191,7 @@ class DDPGAgent(object):
             if h_actor is None:
                 h_t = self.policy_hidden_states.clone() # (B,H)
             else:
-                h_t = h_actor.clone()
+                h_t = h_actor   #.clone()
 
             # DEBUG 
             # h_t = torch.zeros_like(h_t)

@@ -286,7 +286,7 @@ class RMADDPG(object):
             ], dim=-1)
 
         # bellman targets
-        target_q = curr_agent.compute_q_val(trgt_vf_in, target=True) # (B*T,1)
+        target_q = curr_agent.compute_value(trgt_vf_in, target=True) # (B*T,1)
         # import pdb; pdb.set_trace()
         target_value = (rews[agent_i].view(-1, 1) + self.gamma * target_q *
                             (1.0 - dones[agent_i].view(-1, 1)))   # (B*T,1)
@@ -302,7 +302,7 @@ class RMADDPG(object):
                 self.flatten_obs(obs[agent_i]),
                 self.flatten_act(acs[agent_i])
             ], dim=-1)
-        actual_value = curr_agent.compute_q_val(vf_in, target=False) # (B*T,1)
+        actual_value = curr_agent.compute_value(vf_in, target=False) # (B*T,1)
 
         # bellman errors
         vf_loss = MSELoss(actual_value, target_value.detach())
@@ -341,7 +341,7 @@ class RMADDPG(object):
             ], dim=-1) 
         
         # value function to update current policy
-        p_value = curr_agent.compute_q_val(p_vf_in, target=False) # (B*T,1)
+        p_value = curr_agent.compute_value(p_vf_in, target=False) # (B*T,1)
         pol_loss = -p_value.mean()
 
         # p regularization, scale down output (gaussian mean,std or logits)
@@ -358,7 +358,7 @@ class RMADDPG(object):
             torch.nn.utils.clip_grad_norm_(curr_agent.policy.parameters(), grad_norm)
         curr_agent.policy_optimizer.step()
 
-        # collect training statss 
+        # NOTE: collect training statss 
         results = {}
         for k, v in zip(
             ["critic_loss", "policy_loss", "policy_reg_loss"], 

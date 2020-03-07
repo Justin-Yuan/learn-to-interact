@@ -2,6 +2,7 @@ import os
 import time
 import random 
 import numpy as np
+import scipy.signal
 from gym.spaces import Box, Discrete, Dict
 from collections import OrderedDict, defaultdict
 import torch
@@ -38,18 +39,18 @@ def get_sample_scheme(n_agents, obs_spaces, act_spaces):
             for k, sp in act_space.spaces.items():
                 act_dim = sp.shape[0] if isinstance(sp, Box) else sp.n 
                 scheme["action/{}/{}".format(i,k)] = {"vshape": (act_dim,)}
+                scheme["logits/{}/{}".format(i,k)] = {"vshape": (act_dim,)}
         else:
             act_dim = act_space.shape[0] if isinstance(act_space, Box) else act_space.n 
             scheme["action/{}".format(i)] = {"vshape": (act_dim,)}
+            scheme["logits/{}".format(i)] = {"vshape": (act_dim,)}
 
         # others 
         scheme["reward/{}".format(i)] = {"vshape": (1,)}
         scheme["done/{}".format(i)] = {"vshape": (1,), "dtype": torch.uint8}
 
-        # ppo specific 
-        value_preds
-        retutrns 
-        action log probs
+        # prev value prediction in sampling
+        scheme["value_preds/{}".format(i)] = {"vshape": (1,)}
 
     return scheme
 
@@ -61,8 +62,10 @@ def dispatch_samples(sample, scheme, n_agents, fields=None):
         sample: SampleBatch/EpisodeBatch, each is (B,T,D)
         scheme: multi-agent sample scheme 
     Returns:
-        obs, acs, rews, next_obs, dones: each is [(B,T,D)]*N
-        obs, next_obs, action can be [dict (B,T,D)]*N
+        obs, acs, rews, next_obs, dones, old_logits, vf_preds: 
+            each is [(B,T,D)]*N
+        NOTE: obs, next_obs, acs, old_logits, vf_preds 
+            can be [dict (B,T,D)]*N
     """
     def filter_key(key):
         if ("obs" in key) and (not "next_obs" in key):  # for obs
@@ -72,6 +75,7 @@ def dispatch_samples(sample, scheme, n_agents, fields=None):
 
     if fields is None:
         fields = ["obs", "action", "reward", "next_obs", "done"]    # default 
+        fields += ["logits"]
     # each should be [(B,T,D)]*N or [dict (B,T,D)]*N
     parsed = [[] for _ in range(len(fields))]
 
@@ -115,8 +119,8 @@ def make_parallel_env(env_func, env_config, batch_size, n_rollout_threads, seed)
         return DummyVecEnv(envs)
 
 
-def log_results(t_env, results, logger, mode="sample", 
-                episodes=None, display_eps_num=4, **kwargs):
+def log_results(t_env, results, logger, mode="sample", episodes=None, 
+        display_eps_num=4, log_agent_returns=False, **kwargs):
     """ training & evaluation logging 
     Arguments:
         - t_env: env step 
@@ -131,9 +135,10 @@ def log_results(t_env, results, logger, mode="sample",
 
         logger.add_scalar("{}/returns_mean".format(mode), np.mean(returns), t_env)
         logger.add_scalar("{}/returns_std".format(mode), np.std(returns), t_env)
-        # for k, a_returns in agent_returns.items():
-        #     logger.add_scalar("{}/{}_returns_mean".format(mode, k), np.mean(a_returns), t_env)
-        #     logger.add_scalar("{}/{}_returns_std".format(mode, k), np.std(a_returns), t_env)
+        if log_agent_returns:
+            for k, a_returns in agent_returns.items():
+                logger.add_scalar("{}/{}_returns_mean".format(mode, k), np.mean(a_returns), t_env)
+                logger.add_scalar("{}/{}_returns_std".format(mode, k), np.std(a_returns), t_env)
 
         # log videos 
         if episodes is not None:
@@ -185,82 +190,3 @@ def log_results(t_env, results, logger, mode="sample",
         raise NotImplementedError("logging option not supported!")
 
 
-
-        
-class KLCoeff(object):
-    def __init__(self, config):
-        # KL Coefficient
-        self._kl_target = config["kl_target"]
-        self._kl_coeff = config["kl_coeff"]
-        
-    def update_kl(self, sampled_kl):
-        if sampled_kl > 2.0 * self._kl_target:
-            self._kl_coeff *= 1.5
-        elif sampled_kl < 0.5 * self._kl_target:
-            self._kl_coeff *= 0.5
-
-    def __call__(self):
-        return self._kl_coeff
-
-
-
-
-
-def discount(x, gamma):
-    return scipy.signal.lfilter([1], [1, -gamma], x[::-1], axis=0)[::-1]
-
-def compute_advantages(use_gae=True):
-    """ normal advantage or generalized advantage estiamate 
-        reference: https://arxiv.org/pdf/1506.02438.pdf
-        reference2: https://stackoverflow.com/questions/47970683/vectorize-a-numpy-discount-calculation
-    """
-    if use_gae:
-        vpred_t = np.concatenate(
-            [rollout[SampleBatch.VF_PREDS],
-             np.array([last_r])])
-        delta_t = (
-            traj[SampleBatch.REWARDS] + gamma * vpred_t[1:] - vpred_t[:-1])
-        # This formula for the gae is 
-        # \hat{A}_t = \delta_t + \gamma\lambda\delta_{t+1} + \cdots + (\gamma\lambda)^{T-t+1}\delta_{T-1}
-        # \delta_t = r_t + \gamma V(s_{t+1})-V(s_t) 
-        traj[Postprocessing.ADVANTAGES] = discount(delta_t, gamma * lambda_)
-        traj[Postprocessing.VALUE_TARGETS] = (
-            traj[Postprocessing.ADVANTAGES] +
-            traj[SampleBatch.VF_PREDS]).copy().astype(np.float32)
-    else:
-        rewards_plus_v = np.concatenate(
-            [rollout[SampleBatch.REWARDS],
-             np.array([last_r])])
-        discounted_returns = discount(rewards_plus_v,
-                                      gamma)[:-1].copy().astype(np.float32)
-
-        if use_critic:
-            traj[Postprocessing.
-                 ADVANTAGES] = discounted_returns - rollout[SampleBatch.
-                                                            VF_PREDS]
-            traj[Postprocessing.VALUE_TARGETS] = discounted_returns
-        else:
-            traj[Postprocessing.ADVANTAGES] = discounted_returns
-            traj[Postprocessing.VALUE_TARGETS] = np.zeros_like(
-                traj[Postprocessing.ADVANTAGES])
-
-    traj[Postprocessing.ADVANTAGES] = traj[
-        Postprocessing.ADVANTAGES].copy().astype(np.float32)
-    return 
-
-
-
-def compute_returns():
-    """ normal advantage or generalized advantage estiamate 
-        reference: https://arxiv.org/pdf/1506.02438.pdf
-    """
-    pass
-
-
-
-
-def explained_variance_torch(y, pred):
-    y_var = torch.pow(y.std(0), 0.5)
-    diff_var = torch.pow((y - pred).std(0), 0.5)
-    var = max(-1.0, 1.0 - (diff_var / y_var).data)
-    return var

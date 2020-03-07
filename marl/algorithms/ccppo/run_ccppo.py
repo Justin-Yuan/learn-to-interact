@@ -10,14 +10,14 @@ from collections import OrderedDict, defaultdict
 import torch
 
 # local
-from algorithms.rmaddpg.utils import get_sample_scheme, dispatch_samples
-from algorithms.rmaddpg.utils import make_parallel_env, log_results
-from algorithms.rmaddpg import RMADDPG
+from algorithms.ccppo.utils import get_sample_scheme, dispatch_samples
+from algorithms.ccppo.utils import make_parallel_env, log_results
+from algorithms.ccppo import CCPPO
 
 from runners.make_env import ENV_MAP
 from runners.sample_batch import EpisodeBatch
-from runners.episode_runner import EpisodeRunner
-from runners.replay_buffer import EpisodeReplayBuffer
+from runners.ctde_runner import CTDERunner
+# from runners.replay_buffer import EpisodeReplayBuffer
 from utils.exp_utils import setup_experiment, ExperimentLogger, ExperimentState
 from utils.exp_utils import time_left, time_str, merge_dict
 
@@ -28,7 +28,7 @@ from utils.exp_utils import time_left, time_str, merge_dict
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp", type=str, default="maddpg",
+    parser.add_argument("--exp", type=str, default="ccppo",
                         help="name of the experiment")
     parser.add_argument("--save_dir", type=str, default="./exps",
                         help="top level path to save experiment/training results")
@@ -47,12 +47,12 @@ def parse_args():
     ## NOTE: episode-wise or transition-wise (per transtion now, easier to log)
     parser.add_argument("--log_interval", default=25000, type=int,
                         help="frequency to log exploration/runner stats")
-    parser.add_argument("--train_interval", default=0, type=int,
-                        help="number of steps collected before each train")
+    # parser.add_argument("--train_interval", default=0, type=int,
+    #                     help="number of steps collected before each train")
     # parser.add_argument("--steps_per_update", default=100, type=int,
     #                     help="number of env steps collected before 1 training update")
-    parser.add_argument("--target_update_interval", default=0, type=int,
-                        help="syncing parameters with target networks")
+    # parser.add_argument("--target_update_interval", default=0, type=int,
+    #                     help="syncing parameters with target networks")
     parser.add_argument("--train_log_interval", default=25000, type=int,
                         help="frequency to log training stats, e.g. losses")
     parser.add_argument("--eval_interval", default=25000, type=int,
@@ -80,10 +80,10 @@ def parse_args():
     ## max episode length for termination
     parser.add_argument("--episode_length", default=25, type=int,
                         help="max episode length")
-    parser.add_argument("--agent_alg", default="MADDPG", type=str,
-                        help="agent model type", choices=['MADDPG', 'DDPG'])
-    parser.add_argument("--adversary_alg", default="MADDPG", type=str,
-                        help="adversary model type", choices=['MADDPG', 'DDPG'])
+    parser.add_argument("--agent_alg", default="CCPPO", type=str,
+                        help="agent model type", choices=['CCPPO', 'PPO'])
+    parser.add_argument("--adversary_alg", default="CCPPO", type=str,
+                        help="adversary model type", choices=['CCPPO', 'PPO'])
     parser.add_argument("--discrete_action", action='store_true')
 
     # training 
@@ -93,8 +93,8 @@ def parse_args():
     parser.add_argument("--n_env_steps", default=500000, type=int,
                         help="max number of env steps to sample")
     ## NOTE: episode-wise or step-wise (episode now)
-    parser.add_argument("--batch_size", default=32, type=int,
-                        help="Batch size for model training per update")
+    # parser.add_argument("--batch_size", default=32, type=int,
+    #                     help="Batch size for model training per update")
     ## in case train batch size too large, could use smaller batch size 
     ## but multiple rounds of updates
     parser.add_argument("--n_updates_per_train", default=1, type=int,
@@ -103,8 +103,19 @@ def parse_args():
     parser.add_argument("--tau", default=0.01, type=float)
     parser.add_argument("--gamma", type=float, default=0.95,
                         help="discount factor")
-    parser.add_argument("--sync_samples", default=False, action='store_true',
-                        help="if to use synchronized samples for each agent training")
+    # ppo parameters 
+    parser.add_argument("--use_gae", default=False, action='store_true',
+                        help="if to use gae for advantage calculate")
+    parser.add_argument("--gae_lambda", type=float, default=1.0,
+                        help="discount factor for gae")
+    parser.add_argument("--clip_param", default=0.3, type=float)
+    parser.add_argument("--vf_clip_param", default=10.0, type=float)
+    parser.add_argument("--vf_loss_coeff", default=1.0, type=float)
+    parser.add_argument("--entropy_coeff", default=0.1, type=float)
+    parser.add_argument("--kl_coeff", default=0.2, type=float)
+    parser.add_argument("--kl_target", default=0.01, type=float)
+    # parser.add_argument("--sync_samples", default=False, action='store_true',
+    #                     help="if to use synchronized samples for each agent training")
     
     # exploration/sampling 
     ## NOTE: episode-wise or transition-wise (per episodes now)
@@ -181,9 +192,9 @@ def run(args):
 
     # NOTE: make learner agent 
     if is_restore or config.restore_model is not None:
-        maddpg = RMADDPG.init_from_save(config.restore_model)
+        learner = CCPPO.init_from_save(config.restore_model)
     else:
-        maddpg = RMADDPG.init_from_env(
+        learner = CCPPO.init_from_env(
             env, 
             agent_alg=config.agent_alg,
             adversary_alg=config.adversary_alg,
@@ -191,21 +202,29 @@ def run(args):
             lr=config.lr,
             hidden_dim=config.hidden_dim,
             rnn_policy=(config.actor == "rnn"),
-            rnn_critic=(config.critic == "rnn")
+            rnn_critic=(config.critic == "rnn"),
+            # ppo stuff
+            use_gae=config.use_gae, 
+            lambda_=config.gae_lambda, 
+            clip_param=config.clip_param, 
+            vf_clip_param=config.vf_clip_param, 
+            vf_loss_coeff=config.vf_loss_coeff, 
+            entropy_coeff=config.entropy_coeff, 
+            kl_coeff=config.kl_coeff, 
+            kl_target=config.kl_target
         )
 
     # NOTE: make sampling runner (env wrapper)  
-    scheme = get_sample_scheme(maddpg.nagents, env.observation_space, env.action_space)
-    runner = EpisodeRunner(scheme, env, maddpg, logger, config.sample_batch_size,
-                            config.episode_length, device=config.device, t_env=t_env)
+    scheme = get_sample_scheme(learner.nagents, env.observation_space, env.action_space)
+    runner = CTDERunner(scheme, env, learner, logger, config.sample_batch_size,
+                            config.episode_length, device=config.device, t_env=t_env,
+                            ma_step_keys=["logits"], is_training=True)
     if not config.no_eval:
-        eval_runner = EpisodeRunner(scheme, eval_env, maddpg, logger, 
+        eval_runner = CTDERunner(scheme, eval_env, learner, logger, 
                             # config.sample_batch_size,
                             2, config.episode_length, device=config.device, t_env=t_env, 
-                            is_training=False)
-    buffer = EpisodeReplayBuffer(scheme, config.max_buffer_size, 
-                        config.episode_length, device=config.device, prefill_num=2*config.batch_size)
-   
+                            ma_step_keys=["logits"], is_training=False)
+    
     # NOTE: start training
     logger.info("Beginning training")
     start_time = time.time()
@@ -214,15 +233,14 @@ def run(args):
     ############################################
     # while t_env <= t_max:
     while episode <= config.n_episodes:
-
+        
         # NOTE: Run for a whole episode at a time
-        maddpg.prep_rollouts(device=config.device)
-        explr_pct_remaining = max(0, config.n_exploration_eps - episode) / config.n_exploration_eps
-        maddpg.scale_noise(config.final_noise_scale + (config.init_noise_scale - config.final_noise_scale) * explr_pct_remaining)
-        maddpg.reset_noise()
+        learner.prep_rollouts(device=config.device)
+        # explr_pct_remaining = max(0, config.n_exploration_eps - episode) / config.n_exploration_eps
+        # learner.scale_noise(config.final_noise_scale + (config.init_noise_scale - config.final_noise_scale) * explr_pct_remaining)
+        # learner.reset_noise()
 
-        episode_batch, _ = runner.run()
-        buffer.insert_episode_batch(episode_batch)
+        episode_sample, _ = runner.run()
         # update counters 
         episode += config.sample_batch_size
         t_env = runner.t_env
@@ -250,49 +268,37 @@ def run(args):
             estate.last_log_t = t_env
 
         ############################################
-        # NOTE: training updates
-        ## change to batch_size * n_updates_per_train for n_updates > 1
-        if buffer.can_sample(config.batch_size) and (t_env - estate.last_train_t >= config.train_interval):
-            maddpg.prep_training(device=config.device)
+        # NOTE: training updates, run for every sample (on-policy)
+        learner.prep_training(device=config.device)
 
-            for _ in range(config.n_updates_per_train):
-                episode_sample = None 
-                for a_i in range(maddpg.nagents):
+        max_ep_t = episode_sample.max_t_filled()
+        episode_sample = episode_sample[:, :max_ep_t]
+        if episode_sample.device != config.device:
+            episode_sample.to(config.device)
 
-                    if config.sync_samples:
-                        # if not None, reuse episode_sample 
-                        if episode_sample is None:
-                            episode_sample = buffer.sample(config.batch_size)
-                    else:   
-                        # each agent can have different collective experience samples
-                        episode_sample = buffer.sample(config.batch_size)
+        # dispatch sample to per agent [(B,T,D)]*N 
+        sample = dispatch_samples(episode_sample, scheme, learner.nagents)
+        # compute & append advantages and value predictions
+        sample += learner.prepare_samples(sample)
 
-                    # Truncate batch to only filled timesteps
-                    max_ep_t = episode_sample.max_t_filled()
-                    episode_sample = episode_sample[:, :max_ep_t]
-                    if episode_sample.device != config.device:
-                        episode_sample.to(config.device)
+        # multiple ppo "epochs" (where old policy comes from)
+        for _ in range(config.n_updates_per_train):
+            # separate updates for each agent using the same/sync samples
+            for a_i in range(learner.nagents):
+                learner.update(sample, a_i)  #, logger=logger)
 
-                    # dispatch sample to per agent [(B,T,D)]*N 
-                    sample = dispatch_samples(episode_sample, scheme, maddpg.nagents)
-                    maddpg.update(sample, a_i)  #, logger=logger)
+        learner.prep_rollouts(device=config.device)
+        estate.last_train_t = t_env
 
-            # sync target networks 
-            if t_env - estate.last_target_update_t >= config.target_update_interval:
-                maddpg.update_all_targets()
-                estate.last_target_update_t = t_env
-
-            maddpg.prep_rollouts(device=config.device)
-            estate.last_train_t = t_env
-
-            # collect & log trianing stats
-            if t_env - estate.last_train_log_t >= config.train_log_interval:
-                train_results = maddpg.get_summaries()
-                maddpg.reset_summaries()
-                logger.info("\n")
-                logger.info("*** training log ***")
-                log_results(t_env, train_results, logger, mode="train")
-                estate.last_train_log_t = t_env
+        ############################################
+        # NOTE: training log, collect & log trianing stats
+        if (estate.last_train_log_t == 0) or (t_env - estate.last_train_log_t >= config.train_log_interval):
+            train_results = learner.get_summaries()
+            learner.reset_summaries()
+            logger.info("\n")
+            logger.info("*** training log ***")
+            log_results(t_env, train_results, logger, mode="train")
+            estate.last_train_log_t = t_env
 
         ############################################
         # NOTE: Execute test runs once in a while
@@ -316,8 +322,8 @@ def run(args):
         # NOTE: checkpoint 
         if (estate.last_save_t == 0) or (t_env - estate.last_save_t >= config.save_interval): 
             os.makedirs(config.save_dir + "/checkpoints", exist_ok=True)
-            maddpg.save(config.save_dir + "/checkpoints" + "/model_{}.ckpt".format(t_env))
-            maddpg.save(config.save_dir + "/model.ckpt")
+            learner.save(config.save_dir + "/checkpoints" + "/model_{}.ckpt".format(t_env))
+            learner.save(config.save_dir + "/model.ckpt")
             logger.info("\n")
             logger.info("*** checkpoint log ***")
             logger.info("Saving models to {}".format(
@@ -328,7 +334,7 @@ def run(args):
     
     ############################################
     # NOTE: clean up 
-    maddpg.save(config.save_dir + "/model.ckpt")    # final save
+    learner.save(config.save_dir + "/model.ckpt")    # final save
     estate.last_save_t = t_env
     estate.save_state(config.save_dir + "/exp_state.pkl")
 

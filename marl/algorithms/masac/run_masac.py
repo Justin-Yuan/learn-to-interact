@@ -10,9 +10,9 @@ from collections import OrderedDict, defaultdict
 import torch
 
 # local
-from algorithms.rmaddpg.utils import get_sample_scheme, dispatch_samples
-from algorithms.rmaddpg.utils import make_parallel_env, log_results
-from algorithms.rmaddpg import RMADDPG
+from algorithms.masac.utils import get_sample_scheme, dispatch_samples
+from algorithms.masac.utils import make_parallel_env, log_results
+from algorithms.masac import MASAC
 
 from runners.make_env import ENV_MAP
 from runners.sample_batch import EpisodeBatch
@@ -28,7 +28,7 @@ from utils.exp_utils import time_left, time_str, merge_dict
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp", type=str, default="maddpg",
+    parser.add_argument("--exp", type=str, default="masac",
                         help="name of the experiment")
     parser.add_argument("--save_dir", type=str, default="./exps",
                         help="top level path to save experiment/training results")
@@ -80,10 +80,10 @@ def parse_args():
     ## max episode length for termination
     parser.add_argument("--episode_length", default=25, type=int,
                         help="max episode length")
-    parser.add_argument("--agent_alg", default="MADDPG", type=str,
-                        help="agent model type", choices=['MADDPG', 'DDPG'])
-    parser.add_argument("--adversary_alg", default="MADDPG", type=str,
-                        help="adversary model type", choices=['MADDPG', 'DDPG'])
+    parser.add_argument("--agent_alg", default="MASAC", type=str,
+                        help="agent model type", choices=['MASAC', 'SAC'])
+    parser.add_argument("--adversary_alg", default="MASAC", type=str,
+                        help="adversary model type", choices=['MASAC', 'SAC'])
     parser.add_argument("--discrete_action", action='store_true')
 
     # training 
@@ -181,9 +181,9 @@ def run(args):
 
     # NOTE: make learner agent 
     if is_restore or config.restore_model is not None:
-        maddpg = RMADDPG.init_from_save(config.restore_model)
+        learner = MASAC.init_from_save(config.restore_model)
     else:
-        maddpg = RMADDPG.init_from_env(
+        learner = MASAC.init_from_env(
             env, 
             agent_alg=config.agent_alg,
             adversary_alg=config.adversary_alg,
@@ -195,11 +195,11 @@ def run(args):
         )
 
     # NOTE: make sampling runner (env wrapper)  
-    scheme = get_sample_scheme(maddpg.nagents, env.observation_space, env.action_space)
-    runner = EpisodeRunner(scheme, env, maddpg, logger, config.sample_batch_size,
+    scheme = get_sample_scheme(learner.nagents, env.observation_space, env.action_space)
+    runner = EpisodeRunner(scheme, env, learner, logger, config.sample_batch_size,
                             config.episode_length, device=config.device, t_env=t_env)
     if not config.no_eval:
-        eval_runner = EpisodeRunner(scheme, eval_env, maddpg, logger, 
+        eval_runner = EpisodeRunner(scheme, eval_env, learner, logger, 
                             # config.sample_batch_size,
                             2, config.episode_length, device=config.device, t_env=t_env, 
                             is_training=False)
@@ -216,10 +216,10 @@ def run(args):
     while episode <= config.n_episodes:
 
         # NOTE: Run for a whole episode at a time
-        maddpg.prep_rollouts(device=config.device)
+        learner.prep_rollouts(device=config.device)
         explr_pct_remaining = max(0, config.n_exploration_eps - episode) / config.n_exploration_eps
-        maddpg.scale_noise(config.final_noise_scale + (config.init_noise_scale - config.final_noise_scale) * explr_pct_remaining)
-        maddpg.reset_noise()
+        learner.scale_noise(config.final_noise_scale + (config.init_noise_scale - config.final_noise_scale) * explr_pct_remaining)
+        learner.reset_noise()
 
         episode_batch, _ = runner.run()
         buffer.insert_episode_batch(episode_batch)
@@ -253,11 +253,11 @@ def run(args):
         # NOTE: training updates
         ## change to batch_size * n_updates_per_train for n_updates > 1
         if buffer.can_sample(config.batch_size) and (t_env - estate.last_train_t >= config.train_interval):
-            maddpg.prep_training(device=config.device)
+            learner.prep_training(device=config.device)
 
             for _ in range(config.n_updates_per_train):
                 episode_sample = None 
-                for a_i in range(maddpg.nagents):
+                for a_i in range(learner.nagents):
 
                     if config.sync_samples:
                         # if not None, reuse episode_sample 
@@ -274,21 +274,21 @@ def run(args):
                         episode_sample.to(config.device)
 
                     # dispatch sample to per agent [(B,T,D)]*N 
-                    sample = dispatch_samples(episode_sample, scheme, maddpg.nagents)
-                    maddpg.update(sample, a_i)  #, logger=logger)
+                    sample = dispatch_samples(episode_sample, scheme, learner.nagents)
+                    learner.update(sample, a_i)  #, logger=logger)
 
             # sync target networks 
             if t_env - estate.last_target_update_t >= config.target_update_interval:
-                maddpg.update_all_targets()
+                learner.update_all_targets()
                 estate.last_target_update_t = t_env
 
-            maddpg.prep_rollouts(device=config.device)
+            learner.prep_rollouts(device=config.device)
             estate.last_train_t = t_env
 
             # collect & log trianing stats
             if t_env - estate.last_train_log_t >= config.train_log_interval:
-                train_results = maddpg.get_summaries()
-                maddpg.reset_summaries()
+                train_results = learner.get_summaries()
+                learner.reset_summaries()
                 logger.info("\n")
                 logger.info("*** training log ***")
                 log_results(t_env, train_results, logger, mode="train")
@@ -316,8 +316,8 @@ def run(args):
         # NOTE: checkpoint 
         if (estate.last_save_t == 0) or (t_env - estate.last_save_t >= config.save_interval): 
             os.makedirs(config.save_dir + "/checkpoints", exist_ok=True)
-            maddpg.save(config.save_dir + "/checkpoints" + "/model_{}.ckpt".format(t_env))
-            maddpg.save(config.save_dir + "/model.ckpt")
+            learner.save(config.save_dir + "/checkpoints" + "/model_{}.ckpt".format(t_env))
+            learner.save(config.save_dir + "/model.ckpt")
             logger.info("\n")
             logger.info("*** checkpoint log ***")
             logger.info("Saving models to {}".format(
@@ -328,7 +328,7 @@ def run(args):
     
     ############################################
     # NOTE: clean up 
-    maddpg.save(config.save_dir + "/model.ckpt")    # final save
+    learner.save(config.save_dir + "/model.ckpt")    # final save
     estate.last_save_t = t_env
     estate.save_state(config.save_dir + "/exp_state.pkl")
 
@@ -342,3 +342,4 @@ def run(args):
 if __name__ == '__main__':
     args = parse_args()
     run(args)
+

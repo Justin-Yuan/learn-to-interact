@@ -1,0 +1,9 @@
+EXP_spread-partial_spread/maddpg-partial-no-mask_mpe_hier_0_2019-12-10_02-48-12v988cxd6
+EXP_spread-partial_spread/maddpg-partial-mask_mpe_hier_0_2019-12-10_02-49-14wcfsou77
+EXP_spread-partial_spread/maddpg-partial-comm-mask_mpe_hier_0_2019-12-10_02-49-14a95ifg15
+EXP_spread-partial_spread/maddpg-partial-mask_mpe_hier_0_2019-12-10_11-31-11yayu0ed9
+EXP_spread-simple_spread/maddpg-simple-comm_fixed_mpe_hier_0_2019-12-10_12-09-54q_w5b1ck
+EXP_spread-partial_spread/maddpg-partial-comm-mask_mpe_hier_0_2019-12-10_12-14-348s2zkklp
+EXP_spread-simple_spread/maddpg-simple-comm_fixed_mpe_hier_0_2019-12-10_12-16-276gpgehr5
+EXP_spread-partial_spread/maddpg-partial-comm-mask_mpe_hier_0_2019-12-10_12-17-17z01fjwks
+EXP_spread-simple_spread/maddpg-simple-comm-discrete_mpe_hier_0_2019-12-10_12-18-07sl9cc9yt
