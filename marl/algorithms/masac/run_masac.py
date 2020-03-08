@@ -16,7 +16,7 @@ from algorithms.masac import MASAC
 
 from runners.make_env import ENV_MAP
 from runners.sample_batch import EpisodeBatch
-from runners.episode_runner import EpisodeRunner
+from runners.ctde_runner import CTDERunner
 from runners.replay_buffer import EpisodeReplayBuffer
 from utils.exp_utils import setup_experiment, ExperimentLogger, ExperimentState
 from utils.exp_utils import time_left, time_str, merge_dict
@@ -105,6 +105,9 @@ def parse_args():
                         help="discount factor")
     parser.add_argument("--sync_samples", default=False, action='store_true',
                         help="if to use synchronized samples for each agent training")
+    # sac parameters
+    parser.add_argument("--target_entropy", type=float, default=10.0,
+                        help="constraint on SAC entropy target")
     
     # exploration/sampling 
     ## NOTE: episode-wise or transition-wise (per episodes now)
@@ -191,18 +194,21 @@ def run(args):
             lr=config.lr,
             hidden_dim=config.hidden_dim,
             rnn_policy=(config.actor == "rnn"),
-            rnn_critic=(config.critic == "rnn")
+            rnn_critic=(config.critic == "rnn"),
+            # sac stuff 
+            target_entropy=config.target_entropy
         )
 
     # NOTE: make sampling runner (env wrapper)  
     scheme = get_sample_scheme(learner.nagents, env.observation_space, env.action_space)
-    runner = EpisodeRunner(scheme, env, learner, logger, config.sample_batch_size,
-                            config.episode_length, device=config.device, t_env=t_env)
+    runner = CTDERunner(scheme, env, learner, logger, config.sample_batch_size,
+                            config.episode_length, device=config.device, t_env=t_env,
+                            ma_step_keys=["log_probs"], is_training=True)
     if not config.no_eval:
-        eval_runner = EpisodeRunner(scheme, eval_env, learner, logger, 
+        eval_runner = CTDERunner(scheme, eval_env, learner, logger, 
                             # config.sample_batch_size,
                             2, config.episode_length, device=config.device, t_env=t_env, 
-                            is_training=False)
+                            ma_step_keys=["log_probs"], is_training=False)
     buffer = EpisodeReplayBuffer(scheme, config.max_buffer_size, 
                         config.episode_length, device=config.device, prefill_num=2*config.batch_size)
    

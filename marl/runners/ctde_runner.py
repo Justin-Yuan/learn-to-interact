@@ -110,8 +110,7 @@ class CTDERunner(BaseRunner):
             torch_obs = self.dispatch_observations(obs)
 
             # [dict (B,A)]*N -> [ [(A,)]*N ]*B or [ [tuple (A,)]*N ]*B
-            torch_actions, step_info = self.mac.step(
-                torch_obs, explore=self.is_training, pred_value=self.is_training)
+            torch_actions, step_info = self.mac.step(torch_obs, explore=self.is_training)
             actions = self.group_actions(torch_actions)
 
             # step env and collect transition, each is (B,N,D)

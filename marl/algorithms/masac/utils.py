@@ -38,9 +38,11 @@ def get_sample_scheme(n_agents, obs_spaces, act_spaces):
             for k, sp in act_space.spaces.items():
                 act_dim = sp.shape[0] if isinstance(sp, Box) else sp.n 
                 scheme["action/{}/{}".format(i,k)] = {"vshape": (act_dim,)}
+                scheme["log_probs/{}/{}".format(i,k)] = {"vshape": (1,)}
         else:
             act_dim = act_space.shape[0] if isinstance(act_space, Box) else act_space.n 
             scheme["action/{}".format(i)] = {"vshape": (act_dim,)}
+            scheme["log_probs/{}/{}".format(i,k)] = {"vshape": (1,)}
 
         # others 
         scheme["reward/{}".format(i)] = {"vshape": (1,)}
@@ -55,7 +57,7 @@ def dispatch_samples(sample, scheme, n_agents, fields=None):
         sample: SampleBatch/EpisodeBatch, each is (B,T,D)
         scheme: multi-agent sample scheme 
     Returns:
-        obs, acs, rews, next_obs, dones: each is [(B,T,D)]*N
+        obs, acs, rews, next_obs, dones, logprobs: each is [(B,T,D)]*N
         obs, next_obs, action can be [dict (B,T,D)]*N
     """
     def filter_key(key):
@@ -66,6 +68,7 @@ def dispatch_samples(sample, scheme, n_agents, fields=None):
 
     if fields is None:
         fields = ["obs", "action", "reward", "next_obs", "done"]    # default 
+        fields += ["log_probs"]
     # each should be [(B,T,D)]*N or [dict (B,T,D)]*N
     parsed = [[] for _ in range(len(fields))]
 

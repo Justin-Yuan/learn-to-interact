@@ -218,7 +218,10 @@ class PPOAgent(object):
             _, old_dist = self.selector.select_action(
                                 logit_samples, explore=False)
             # evaluate log prob (B,T) -> (B,T,1)
-            log_prob += dist.log_prob(action).unsqueeze(-1)
+            # NOTE: attention!!! if log_prob on rsample action, backprop is done twice and wrong
+            log_prob += dist.log_prob(
+                action.clone().detach()
+            ).unsqueeze(-1)
             old_log_prob += old_dist.log_prob(action).unsqueeze(-1)
             # get current action distrib entropy
             entropy += dist.entropy().unsqueeze(-1)
@@ -244,7 +247,7 @@ class PPOAgent(object):
             self.policy_hidden_states = hidden_states   # if mlp, still defafult None
 
             # make distributions 
-            act_d, log_prob_d = {}, {}, {}
+            act_d = {}
             for k, logits in logits_d.items():
                 action, dist = self.selector.select_action(
                                 logits, explore=explore)

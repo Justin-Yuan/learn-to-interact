@@ -1,5 +1,7 @@
 from collections import defaultdict
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 from torch.autograd import Variable
 from torch.optim import Adam
@@ -9,13 +11,31 @@ from agents.policy import Policy, DEFAULT_ACTION
 from utils.networks import MLPNetwork, RecurrentNetwork
 from utils.misc import hard_update, gumbel_softmax, onehot_from_logits
 from utils.noise import OUNoise
+from agents.action_selectors import DiscreteActionSelector, ContinuousActionSelector
 
 
-############################################ ddpg 
+
+############################################ Automated Temperature Adjustment
+
+class LogAlpha(nn.Module):
+    """ log of temperature parameter 
+    """
+    def __init__(self, init_value=0.0):
+        super(LogAlpha, self).__init__()
+        self.log_alpha = nn.Parameter(torch.tensor(init_value, requires_grad=True))
+        
+    def get_alpha(self):
+        return torch.exp(self.log_alpha)
+
+    def __call__(self):
+        return self.log_alpha
+
+
+############################################ sac 
 class SACAgent(object):
     """
     General class for SAC agents (policy, critic1, critic2, target critic1 , target
-    critic2, exploration noise)
+    critic2, log_alpha, action selector)
     """
     def __init__(self, algo_type="MASAC", act_space=None, obs_space=None, 
                 rnn_policy=False, rnn_critic=False, hidden_dim=64, lr=0.01, 
@@ -33,13 +53,6 @@ class SACAgent(object):
         # move and comm space both discrete or continuous)
         tmp = act_space.spaces["move"] if isinstance(act_space, Dict) else act_space
         self.discrete_action = False if isinstance(tmp, Box) else True 
-
-        # Exploration noise 
-        if not self.discrete_action:
-            # `move`, `comm` share same continuous noise source
-            self.exploration = OUNoise(self.get_shape(act_space))
-        else:
-            self.exploration = 0.3  # epsilon for eps-greedy
         
         # Policy (supports multiple outputs)
         self.rnn_policy = rnn_policy
@@ -60,12 +73,12 @@ class SACAgent(object):
                                 #  constrain_out=True,
                                  discrete_action=self.discrete_action,
                                  rnn_policy=rnn_policy)
-        # self.target_policy = Policy(num_in_pol, num_out_pol,
-        #                          hidden_dim=hidden_dim,
-        #                         #  constrain_out=True,
-        #                          discrete_action=self.discrete_action,
-        #                          rnn_policy=rnn_policy)
-        # hard_update(self.target_policy, self.policy)
+
+        # action selector (distribution wrapper)
+        if self.discrete_action:
+            self.selector = DiscreteActionSelector()
+        else:
+            self.selector = ContinuousActionSelector()
 
         # Critic 
         self.rnn_critic = rnn_critic
@@ -85,12 +98,12 @@ class SACAgent(object):
         self.critic1 = critic_net_fn(num_in_critic, 1,
                                  hidden_dim=hidden_dim,
                                  constrain_out=False)
-        self.target_critic1 = critic_net_fn(num_in_critic, 1,
-                                        hidden_dim=hidden_dim,
-                                        constrain_out=False)
         self.critic2 = critic_net_fn(num_in_critic, 1,
                                  hidden_dim=hidden_dim,
                                  constrain_out=False)
+        self.target_critic1 = critic_net_fn(num_in_critic, 1,
+                                        hidden_dim=hidden_dim,
+                                        constrain_out=False)
         self.target_critic2 = critic_net_fn(num_in_critic, 1,
                                         hidden_dim=hidden_dim,
                                         constrain_out=False)
@@ -98,7 +111,7 @@ class SACAgent(object):
         hard_update(self.target_critic2, self.critic2)
 
         # alpha
-        self.log_alpha = torch.zeros(1, requires_grad=True)
+        self.log_alpha = LogAlpha(0.0)
 
         # Optimizers 
         self.policy_optimizer = Adam(self.policy.parameters(), lr=lr)
@@ -121,18 +134,6 @@ class SACAgent(object):
                 return 0
         else:
             return x.n if self.discrete_action else x.shape[0]
-    
-
-    def reset_noise(self):
-        if not self.discrete_action:
-            self.exploration.reset()
-
-    def scale_noise(self, scale):
-        if self.discrete_action:
-            self.exploration = scale
-        else:
-            self.exploration.scale = scale
-
 
     def init_hidden(self, batch_size):
         # (1,H) -> (B,H)
@@ -140,63 +141,64 @@ class SACAgent(object):
         if self.rnn_policy:
             self.policy_hidden_states = self.policy.init_hidden().expand(batch_size, -1)  
         if self.rnn_critic:
-            self.critic_hidden_states = self.critic.init_hidden().expand(batch_size, -1) 
+            self.critic1_hidden_states = self.critic1.init_hidden().expand(batch_size, -1) 
+            self.critic2_hidden_states = self.critic2.init_hidden().expand(batch_size, -1) 
 
 
-    def compute_value(self, vf_in, h_critic=None, target=False):
+    def compute_value(self, vf_in, h1_critic=None, h2_critic=None, target=False):
         """ training critic forward with specified policy 
         Arguments:
             vf_in: (B,T,K)
             target: if use target network
         Returns:
-            q: (B*T,1)
+            q1, q2: (B*T,1)
         """
         bs, ts, _ = vf_in.shape
-        critic = self.target_critic if target else self.critic
+        critic1 = self.target_critic1 if target else self.critic1
+        critic2 = self.target_critic2 if target else self.critic2
 
         if self.rnn_critic:
-            q = []   # (B,1)*T
+            q1, q2 = [], []   # (B,1)*T
             if h_critic is None:
-                h_t = self.critic_hidden_states.clone() # (B,H)
+                h1_t = self.critic1_hidden_states.clone() # (B,H)
+                h2_t = self.critic2_hidden_states.clone() 
             else:
-                h_t = h_critic  #.clone()
-
-            # DEBUG 
-            # h_t = torch.zeros_like(h_t)
-            # h_t = h_t.detach()
+                h1_t = h1_critic  #.clone()
+                h2_t = h2_critic
 
             # rollout 
             for t in range(ts):
-                q_t, h_t = critic(vf_in[:,t], h_t)
-                q.append(q_t)
-            q = torch.stack(q, 0).permute(1,0,2)   # (T,B,1) -> (B,T,1)
-            q = q.reshape(bs*ts, -1)  # (B*T,1)
+                q1_t, h1_t = critic1(vf_in[:,t], h1_t)
+                q1.append(q1_t)
+                q2_t, h2_t = critic2(vf_in[:,t], h2_t)
+                q2.append(q2_t)
+
+            q1 = torch.stack(q1, 0).permute(1,0,2)   # (T,B,1) -> (B,T,1)
+            q1 = q1.reshape(bs*ts, -1)  # (B*T,1)
+            q2 = torch.stack(q2, 0).permute(1,0,2)   
+            q2 = q2.reshape(bs*ts, -1)  
         else:
             # (B,T,D) -> (B*T,1)
-            q, _ = critic(vf_in.reshape(bs*ts, -1))
-        return q 
+            q1, _ = critic1(vf_in.reshape(bs*ts, -1))
+            q2, _ = critic2(vf_in.reshape(bs*ts, -1))
+        return q1, q2
 
 
-    def compute_action(self, obs, h_actor=None, target=False, requires_grad=True):
+    def compute_action_logprob(self, obs, h_actor=None, reparameterize=True):
         """ traininsg actor forward with specified policy 
         concat all actions to be fed in critics
         Arguments:
             obs: (B,T,O)
             target: if use target network
-            requires_grad: if use _soft_act to differentiate discrete action
+            reparameterize: if to use reparameterization in action selection
         Returns:
-            act: dict of (B,T,A) 
+            act_d: dict of sampled actions (B,T,A) 
+            log_prob_d: dict of action log probs (B,T,1)
+            act/logits_d: dict of output logits to sample from (B,T,A)
         """
-        def _soft_act(x):    # x: (B,A)
-            if not self.discrete_action:
-                return x 
-            if requires_grad:
-                return gumbel_softmax(x, hard=True)
-            else:
-                return onehot_from_logits(x)
-
         bs, ts, _ = obs.shape
-        pi = self.target_policy if target else self.policy
+        pi = self.policy
+        act_d, log_prob_d = {}, {}
 
         if self.rnn_policy:
             act = defaultdict(list)
@@ -204,10 +206,6 @@ class SACAgent(object):
                 h_t = self.policy_hidden_states.clone() # (B,H)
             else:
                 h_t = h_actor   #.clone()
-
-            # DEBUG 
-            # h_t = torch.zeros_like(h_t)
-            # h_t = h_t.detach()
 
             # rollout 
             for t in range(ts):
@@ -225,7 +223,22 @@ class SACAgent(object):
                 k: _soft_act(ac).reshape(bs, ts, -1)  
                 for k, ac in act.items()
             }   # dict of (B,T,A)
-        return act
+
+        # make distribution & evaluate log probs
+        for k, seq_logits in act.items():
+            action, dist = self.selector.select_action(
+                                seq_logits, explore=False, 
+                                reparameterize=reparameterize)
+            if not self.discrete_action:    # continuous action
+                action = action.clamp(-1, 1)
+            act_d[k] = action   # (B,T,A)
+            # evaluate log prob (B,T) -> (B,T,1)
+            # NOTE: attention!!! if log_prob on rsample action, backprop is done twice and wrong
+            log_prob_d[k] = dist.log_prob(
+                action.clone().detach()
+            ).unsqueeze(-1)
+
+        return act_d, log_prob_d, act
 
 
     def step(self, obs, explore=False):
@@ -236,29 +249,24 @@ class SACAgent(object):
             obs: (B,O)
             explore: Whether or not to add exploration noise
         Returns:
-            action: dict of actions for this agent, (B,A)
+            act_d: dict of actions for this agent, (B,A)
+            log_prob_d: dict of action log probs, (B,1)
         """
         with torch.no_grad():
-            action, hidden_states = self.policy(obs, self.policy_hidden_states)
+            logits_d, hidden_states = self.policy(obs, self.policy_hidden_states)
             self.policy_hidden_states = hidden_states   # if mlp, still defafult None
 
-            if self.discrete_action:
-                for k in action:
-                    if explore:
-                        action[k] = gumbel_softmax(action[k], hard=True)
-                    else:
-                        action[k] = onehot_from_logits(action[k])
-            else:  # continuous action
-                idx = 0 
-                noise = Variable(Tensor(self.exploration.noise()),
-                                    requires_grad=False)
-                for k in action:
-                    if explore:
-                        dim = action[k].shape[-1]
-                        action[k] += noise[idx : idx+dim]
-                        idx += dim 
-                    action[k] = action[k].clamp(-1, 1)
-        return action
+            # make distributions 
+            act_d, log_prob_d = {}, {}
+            for k, logits in logits_d.items():
+                action, dist = self.selector.select_action(
+                                logits, explore=explore)
+                if not self.discrete_action:    # continuous action
+                    action = action.clamp(-1, 1)
+                act_d[k] = action
+                # get log prob of sampled action
+                log_prob_d[k] = dist.log_prob(action).unsqueeze(-1) # (B,1)
+        return act_d, log_prob_d
 
 
     def get_params(self):
@@ -267,7 +275,6 @@ class SACAgent(object):
             'critic1': self.critic.state_dict(),
             'critic2': self.critic.state_dict(),
             'log_alpha': self.log_alpha.detach().item(),
-            # 'target_policy': self.target_policy.state_dict(),
             'target_critic1': self.target_critic1.state_dict(),
             'target_critic2': self.target_critic2.state_dict(),
             'policy_optimizer': self.policy_optimizer.state_dict(),
@@ -282,7 +289,6 @@ class SACAgent(object):
         self.critic2.load_state_dict(params['critic2'])
         with torch.no_grad():
             self.log_alpha[:] = state_dict["log_alpha"]
-        # self.target_policy.load_state_dict(params['target_policy'])
         self.target_critic1.load_state_dict(params['target_critic1'])
         self.target_critic2.load_state_dict(params['target_critic2'])
         self.policy_optimizer.load_state_dict(params['policy_optimizer'])

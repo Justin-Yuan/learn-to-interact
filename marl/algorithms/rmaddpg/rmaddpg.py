@@ -15,8 +15,9 @@ class RMADDPG(object):
     Wrapper class for DDPG-esque (i.e. also MADDPG) agents in multi-agent task
     """
     def __init__(self, agent_init_params=None, alg_types=None,
-                 gamma=0.95, tau=0.01, lr=0.01, hidden_dim=64
+                 gamma=0.95, tau=0.01, lr=0.01, hidden_dim=64,
                 #  discrete_action=False
+                **kwargs
         ):
         """
         Inputs:
@@ -124,7 +125,7 @@ class RMADDPG(object):
     @classmethod
     def init_from_env(cls, env, agent_alg="MADDPG", adversary_alg="MADDPG",
                       gamma=0.95, tau=0.01, lr=0.01, hidden_dim=64, 
-                      rnn_policy=False, rnn_critic=False):
+                      rnn_policy=False, rnn_critic=False, **kwargs):
         """ Instantiate instance of this class from multi-agent environment
         """
         agent_init_params = []
@@ -150,6 +151,9 @@ class RMADDPG(object):
             'agent_init_params': agent_init_params,
             # 'discrete_action': discrete_action,
         }
+        # algo specific configs
+        init_dict.update(kwargs)
+
         instance = cls(**init_dict)
         instance.init_dict = init_dict
         return instance
@@ -323,7 +327,9 @@ class RMADDPG(object):
             all_pol_acs = []
             for i, pi, ob in zip(range(self.nagents), self.policies, obs):
                 if i == agent_i:    # insert current agent act to q input 
-                    all_pol_acs.append(curr_pol_out)
+                    # NOTE: dangerous, consider flatten then append 
+                    all_pol_acs.append(self.flatten_act(curr_pol_out))
+                    # all_pol_acs.append(curr_pol_out)
                 else: 
                     # p_act_i = self.agents[i].compute_action(ob, target=False, requires_grad=False) 
                     p_act_i = self.flatten_act(acs[i])

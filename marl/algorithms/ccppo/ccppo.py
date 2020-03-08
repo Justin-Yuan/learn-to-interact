@@ -28,8 +28,8 @@ class CCPPO(object):
                 num_in_pol (int): Input dimensions to policy
                 num_out_pol (int): Output dimensions to policy
                 num_in_critic (int): Input dimensions to critic
-            alg_types (list of str): Learning algorithm for each agent (DDPG
-                                       or MADDPG)
+            alg_types (list of str): Learning algorithm for each agent (PPO
+                                       or CCPPO)
             gamma (float): Discount factor
             tau (float): Target update rate
             lr (float): Learning rate for policy and critic
@@ -79,18 +79,6 @@ class CCPPO(object):
     def policies(self):
         return [a.policy for a in self.agents]
 
-    def scale_noise(self, scale):
-        """ Scale noise for each agent
-        Inputs:
-            scale (float): scale of noise
-        """
-        for a in self.agents:
-            a.scale_noise(scale)
-
-    def reset_noise(self):
-        for a in self.agents:
-            a.reset_noise()
-
     def prep_training(self, device='cpu'):
         """ switch nn models to train mode """
         for a in self.agents:
@@ -128,7 +116,7 @@ class CCPPO(object):
 
     @classmethod
     def init_from_env(
-        cls, env, agent_alg="MADDPG", adversary_alg="MADDPG",
+        cls, env, agent_alg="CCPPO", adversary_alg="CCPPO",
         gamma=0.95, tau=0.01, lr=0.01, hidden_dim=64, 
         rnn_policy=False, rnn_critic=False, **kwargs
     ):
@@ -149,7 +137,7 @@ class CCPPO(object):
                 'env_obs_space': env.observation_space,
                 'env_act_space': env.action_space
             })
-        # also put agent init dicts to maddpg init_dict
+        # also put agent init dicts to ccppo init_dict
         init_dict = {
             'gamma': gamma, 'tau': tau, 'lr': lr,
             'hidden_dim': hidden_dim,
@@ -176,12 +164,11 @@ class CCPPO(object):
         return instance
 
     ############################################ NOTE: step/act
-    def step(self, observations, explore=False, pred_value=False):
+    def step(self, observations, explore=False):
         """ Take a step forward in environment with all agents
         Arguments:
             observations: [(B,O)]*N, List of observations for each agent
             explore (boolean): Whether or not to add exploration noise
-            pred_value: if to record info (e.g. separate/joint values) for training
         Returnss:
             actions: List of action (np array or dict of it) for each agent
             info: dict of info needed for decentralized/centralized training
@@ -195,25 +182,7 @@ class CCPPO(object):
             actions.append(act_d)   # dict (B,A)
             logits.append(logits_d)    # dict (B,A)
         info["logits"] = logits  # [dict (B,A)]*N
-            
-        # if to get value predictions
-        if not pred_value:
-            return actions, info 
         
-        for agent_i, a in enumerate(self.agents):
-            # build input 
-            if self.alg_types[agent_i] == 'CCPPO'
-                vf_in = torch.cat([
-                    *self.flatten_obs(observations, ma=True), 
-                ], dim=-1)  # [(B,O)]*N -> (B,O*N) 
-            else:  # PPO
-                vf_in = self.flatten_obs(observations[agent_i]) # (B,O)
-
-            # predicted values (to be recorded in buffer)
-            agent_vf = a.step_value(vf_in) # (B,1)
-            values.append(agent_vf)
-
-        info["value_preds"] = values    # [(B,1)]*N
         return actions, info
 
     ############################################ NOTE: update
