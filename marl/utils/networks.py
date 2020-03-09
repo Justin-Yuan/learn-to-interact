@@ -136,7 +136,7 @@ def rnn_forward_sequence(rnn, seq_inputs, seq_init_h, truncate_steps=-1):
         for t in range(inputs.shape[1]):
             q_t, next_h = rnn(inputs[:,t], hs[-1])
             hs.append(next_h)
-            qs.append(qs)
+            qs.append(q_t)
         return hs, qs
 
     # RNN forward run 
