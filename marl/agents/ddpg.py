@@ -6,7 +6,7 @@ from torch.optim import Adam
 from gym.spaces import Box, Discrete, Dict
 
 from agents.policy import Policy, DEFAULT_ACTION
-from utils.networks import MLPNetwork, RecurrentNetwork
+from utils.networks import MLPNetwork, RecurrentNetwork, rnn_forward_sequence
 from utils.misc import hard_update, gumbel_softmax, onehot_from_logits
 from utils.noise import OUNoise
 
@@ -131,11 +131,12 @@ class DDPGAgent(object):
             self.critic_hidden_states = self.critic.init_hidden().expand(batch_size, -1) 
 
 
-    def compute_value(self, vf_in, h_critic=None, target=False):
+    def compute_value(self, vf_in, h_critic=None, target=False, truncate_steps=-1):
         """ training critic forward with specified policy 
         Arguments:
             vf_in: (B,T,K)
             target: if use target network
+            truncate_steps: number of BPTT steps to truncate if used
         Returns:
             q: (B*T,1)
         """
@@ -143,7 +144,6 @@ class DDPGAgent(object):
         critic = self.target_critic if target else self.critic
 
         if self.rnn_critic:
-            q = []   # (B,1)*T
             if h_critic is None:
                 h_t = self.critic_hidden_states.clone() # (B,H)
             else:
@@ -154,9 +154,12 @@ class DDPGAgent(object):
             # h_t = h_t.detach()
 
             # rollout 
-            for t in range(ts):
-                q_t, h_t = critic(vf_in[:,t], h_t)
-                q.append(q_t)
+            q = rnn_forward_sequence(
+                critic, vf_in, h_t, truncate_steps=truncate_steps)
+            # q = []   # (B,1)*T
+            # for t in range(ts):
+            #     q_t, h_t = critic(vf_in[:,t], h_t)
+            #     q.append(q_t)
             q = torch.stack(q, 0).permute(1,0,2)   # (T,B,1) -> (B,T,1)
             q = q.reshape(bs*ts, -1)  # (B*T,1)
         else:
@@ -165,7 +168,7 @@ class DDPGAgent(object):
         return q 
 
 
-    def compute_action(self, obs, h_actor=None, target=False, requires_grad=True):
+    def compute_action(self, obs, h_actor=None, target=False, requires_grad=True, truncate_steps=-1):
         """ traininsg actor forward with specified policy 
         concat all actions to be fed in critics
         Arguments:
@@ -187,7 +190,6 @@ class DDPGAgent(object):
         pi = self.target_policy if target else self.policy
 
         if self.rnn_policy:
-            act = defaultdict(list)
             if h_actor is None:
                 h_t = self.policy_hidden_states.clone() # (B,H)
             else:
@@ -198,8 +200,16 @@ class DDPGAgent(object):
             # h_t = h_t.detach()
 
             # rollout 
-            for t in range(ts):
-                act_t, h_t = pi(obs[:,t], h_t)  # act_t is dict (B,A)
+            seq_logits = rnn_forward_sequence(
+                pi, obs, h_t, truncate_steps=truncate_steps)
+            # seq_logits = [] 
+            # for t in range(ts):
+            #     act_t, h_t = pi(obs[:,t], h_t)  # act_t is dict (B,A)
+            #     seq_logits.append(act_t)
+
+            # soften deterministic output for backprop 
+            act = defaultdict(list)
+            for act_t in seq_logits:
                 for k, a in act_t.items():
                     act[k].append(_soft_act(a))
             act = {
@@ -250,12 +260,14 @@ class DDPGAgent(object):
 
 
     def get_params(self):
-        return {'policy': self.policy.state_dict(),
-                'critic': self.critic.state_dict(),
-                'target_policy': self.target_policy.state_dict(),
-                'target_critic': self.target_critic.state_dict(),
-                'policy_optimizer': self.policy_optimizer.state_dict(),
-                'critic_optimizer': self.critic_optimizer.state_dict()}
+        return {
+            'policy': self.policy.state_dict(),
+            'critic': self.critic.state_dict(),
+            'target_policy': self.target_policy.state_dict(),
+            'target_critic': self.target_critic.state_dict(),
+            'policy_optimizer': self.policy_optimizer.state_dict(),
+            'critic_optimizer': self.critic_optimizer.state_dict()
+        }
 
     def load_params(self, params):
         self.policy.load_state_dict(params['policy'])
@@ -265,3 +277,4 @@ class DDPGAgent(object):
         self.policy_optimizer.load_state_dict(params['policy_optimizer'])
         self.critic_optimizer.load_state_dict(params['critic_optimizer'])
 
+    

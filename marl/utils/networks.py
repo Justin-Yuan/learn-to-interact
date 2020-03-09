@@ -119,6 +119,44 @@ class RecurrentNetwork(nn.Module):
         return out, h
 
 
+
+def rnn_forward_sequence(rnn, seq_inputs, seq_init_h, truncate_steps=-1):
+    """ allow full bptt or truncated bptt 
+    Arguments:
+        rnn: RNN network 
+        seq_inputs: (B,T,D)
+        seq_init_h: (B,D)
+        truncate_steps: int, number of bptt truncate steps 
+    Returns:
+        seq_qs: list of outputs, [(B,O)]*T or [dict (B,O)]*T 
+    """
+    def rollout(inputs, init_h):
+        """ rnn partial rollout for k steps given init_h """
+        hs, qs = [init_h], []   # [(B,D)]*(k+1), # [(B,O)]*k                
+        for t in range(inputs.shape[1]):
+            q_t, next_h = rnn(inputs[:,t], hs[-1])
+            hs.append(next_h)
+            qs.append(qs)
+        return hs, qs
+
+    # RNN forward run 
+    if truncate_steps <= 0:  # normal bptt 
+        _, seq_qs = rollout(seq_inputs, seq_init_h)
+        return seq_qs
+    else:   # truncated bptt 
+        with torch.no_grad():   # pre-run to get all hidden states
+            seq_hs, _ = rollout(seq_inputs, seq_init_h)
+        # re-run each truncated sub-sequences (for proper backprop)
+        seq_qs = []
+        for t in range(1,seq_inputs.shape[1]+1):
+            idx = 0 if t <= truncate_steps else t - truncate_steps
+            t_inputs = seq_inputs[:,idx:t]  # (B,truncate_steps,D)
+            t_init_h = seq_hs[idx]  # (B,D)
+            _, t_qs = rollout(t_inputs, t_init_h)
+            seq_qs.append(t_qs[-1])
+        return seq_qs
+
+
 ############################################ gcn 
 class GCN(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim=64, nonlin=F.relu,

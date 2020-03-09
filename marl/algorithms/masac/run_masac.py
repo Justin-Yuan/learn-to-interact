@@ -134,6 +134,8 @@ def parse_args():
     # evaluation 
     parser.add_argument("--no_eval", default=False, action='store_true',
                         help="do evaluation during training")
+    parser.add_argument("--no_render", default=False, action='store_true', 
+                        help='if to stop rendering in evaluation rollouts')
     parser.add_argument("--eval_n_episodes", default=10, type=int)
 
     # loggings 
@@ -306,7 +308,7 @@ def run(args):
             n_test_runs = max(1, config.eval_n_episodes // eval_runner.batch_size)
             eval_episodes = []
             for _ in range(n_test_runs):
-                eval_bt, _ = eval_runner.run(render=True)
+                eval_bt, _ = eval_runner.run(render=(not config.no_render))
                 eval_episodes.append(eval_bt)
             # collect evaluation stats
             eval_results = eval_runner.get_summaries()

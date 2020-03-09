@@ -32,7 +32,7 @@ class PPOAgent(object):
     """
     General class for PPO agents (policy, critic, action selector, kl scheduler)
     """
-    def __init__(self, self, algo_type="CCPPO", act_space=None, obs_space=None, 
+    def __init__(self, algo_type="CCPPO", act_space=None, obs_space=None, 
                 rnn_policy=False, rnn_critic=False, hidden_dim=64, lr=0.01, 
                 env_obs_space=None, env_act_space=None, 
                 kl_coeff=0.2, kl_target=0.01):

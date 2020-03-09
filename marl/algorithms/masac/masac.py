@@ -14,6 +14,8 @@ class MASAC(object):
     """
     Wrapper class for SAC-esque (i.e. also MASAC) agents in multi-agent task
     reference: https://arxiv.org/pdf/1812.05905.pdf
+    reference2: https://github.com/astooke/rlpyt/blob/master/rlpyt/algos/qpg/sac.py
+                https://github.com/astooke/rlpyt/blob/master/rlpyt/agents/qpg/sac_agent.py
     """
     def __init__(self, agent_init_params=None, alg_types=None,
                  gamma=0.95, tau=0.01, lr=0.01, hidden_dim=64,

@@ -105,7 +105,7 @@ class StepRunner(BaseRunner):
                 self.episode_agent_returns[a][i] += rewards[i, a] 
     
 
-    def run(self, ender=False):
+    def run(self, render=False):
         """ get batch of steps, one parallel step at a time 
         """
         if t % self.max_episode_len == 0:

@@ -131,7 +131,7 @@ def log_results(t_env, results, logger, mode="sample", episodes=None,
                 logger.add_scalar("{}/{}_returns_std".format(mode, k), np.std(a_returns), t_env)
 
         # log videos 
-        if episodes is not None:
+        if episodes is not None and getattr(episodes, "frame", None) is not None:
             frames = episodes["frame"]  # (B,T,H,W,C)
             b, t, h, w, c = frames.shape
             display_num = min(b, display_eps_num) 
