@@ -77,3 +77,6 @@ elif [ "$MODE" == "port-forward" ]; then
 else 
     echo "option not supported..."
 fi 
+
+
+# srun -p cpu --gres=gpu:0 -c 8 --mem=15G "<command>"
