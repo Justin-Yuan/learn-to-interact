@@ -121,6 +121,9 @@ def log_results(t_env, results, logger, mode="sample", episodes=None,
         - logger: experiment logger
         - mode: sample|train|eval
     """
+    # print current directory for easier identification 
+    logger.info(logger.log_dir)
+    
     if (mode == "sample") or (mode == "eval"):
         # exploration/evaluation episode stats, e.g. returns, lengths
         returns = results["returns"]
@@ -134,7 +137,7 @@ def log_results(t_env, results, logger, mode="sample", episodes=None,
                 logger.add_scalar("{}/{}_returns_std".format(mode, k), np.std(a_returns), t_env)
 
         # log videos 
-        if episodes is not None and getattr(episodes, "frame", None) is not None:
+        if episodes is not None and "frame" in episodes.scheme:
             frames = episodes["frame"]  # (B,T,H,W,C)
             b, t, h, w, c = frames.shape
             display_num = min(b, display_eps_num) 

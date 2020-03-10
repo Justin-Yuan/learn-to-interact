@@ -157,6 +157,46 @@ def rnn_forward_sequence(rnn, seq_inputs, seq_init_h, truncate_steps=-1):
         return seq_qs
 
 
+############################################ attention 
+
+class AttentionLayer(nn.Module):
+    """ single head attention on input vectors 
+    """
+    def __init__(self, input_dim, hidden_dim=64, nonlin=F.relu, **kwargs):
+        """
+        Inputs:
+            input_dim (int): Number of dimensions in input
+            hidden_dim (int): Number of hidden dimensions
+            nonlin (PyTorch function): Nonlinearity to apply to hidden layers
+        """
+        super(AttentionLayer, self).__init__()
+
+        self.hidden_dim = hidden_dim
+        self.nonlin = nonlin
+        self.attn_fc1 = nn.Linear(input_dim, hidden_dim, bias=False)
+        self.attn_fc2 = nn.Linear(input_dim, hidden_dim, bias=False)
+
+    def forward(self, x, exclude_self=True):
+        """ x: (B,N,D)
+        """
+        b, n, d = x.shape
+        h1 = self.attn_fc1(x)  # (B,N,H)
+        h2 = self.attn_fc2(x)
+        # (B,N,H) x (B,H,N) -> (B,N,N)
+        attn_weights = torch.bmm(h1, h2.permute(0,2,1))
+        # if to set its own attn logit to -infinity 
+        if exclude_self:
+            mask = torch.ones(n,n) - torch.eye(n) - torch.eye(float("Inf"))
+            mask = mask.unsqueeze(0).expand(b,n,n)
+            att_weights = att_weights * mask
+        # normalize 
+        attn_weights = F.softmax(att_weights, -1)
+        # linear combo, (B,N,N) x (B,N,H) -> (B,N,H)
+        out = torch.bmm(att_weights, x) 
+        return out 
+
+
+
 ############################################ gcn 
 class GCN(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim=64, nonlin=F.relu,

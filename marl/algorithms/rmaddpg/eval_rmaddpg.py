@@ -16,7 +16,7 @@ from runners.episode_runner import EpisodeRunner
 from utils.exp_utils import setup_evaluation, ExperimentLogger 
 from utils.exp_utils import time_left, time_str, merge_dict
 
-from .run_rmaddpg import get_sample_scheme, make_parallel_env, log_results
+from algorithms.rmaddpg.utils import get_sample_scheme, make_parallel_env, log_results
 
 
 #####################################################################################
@@ -75,123 +75,32 @@ def parse_args():
 
 
 #####################################################################################
-### funcs 
+### eval funcs 
 ####################################################################################
 
-def maddpg_rollout(maddpg, env, n_episodes=10, episode_length=25, logger=None, 
-                    render=False, save_gifs=False, fps=20, **kwargs):
-    """ get evaluation rollouts, return rollouts
-    """
-    rollouts = {
-        "obs": [],
-        "actions": [],
-        "rewards": [],
-        "dones": [],
-        "next_obs": [],
-        "episode_ids": []
-    }
-    maddpg.prep_rollouts(device="cpu")
-    ifi = 1 / fps  # inter-frame interval
-
-    for ep_i in range(n_episodes):
-        if logger is not None: 
-            logger.info("Episode %i/%i" % (ep_i + 1, n_episodes))
-        episode_rewards = []
-        
-        # init episode
-        obs = env.reset()
-        if save_gifs:
-            rollouts["frames"] = []
-            rollouts["frames"].append(env.render('rgb_array')[0])
-        if render:
-            env.render('human')
-
-        for t_i in range(episode_length):
-            calc_start = time.time()
-            # rearrange observations to be per agent, and convert to torch Variable
-            torch_obs = [Variable(torch.Tensor(obs[i]).view(1, -1),
-                                  requires_grad=False)
-                         for i in range(maddpg.nagents)]
-
-            # get actions as torch Variables
-            torch_actions = maddpg.step(torch_obs, explore=False)
-            # convert actions to numpy arrays
-            actions = [ac.data.numpy().flatten() for ac in torch_actions]
-
-            # step env 
-            next_obs, rewards, dones, infos = env.step(actions)
-            rollouts["obs"].append(obs)
-            rollouts["actions"].append(actions)
-            rollouts["rewards"].append(rewards)
-            rollouts["dones"].append(dones)
-            rollouts["next_obs"].append(next_obs)
-            rollouts["episode_ids"].append(ep_i)
-            obs = next_obs
-            episode_rewards.append(rewards)
-
-            # render 
-            if save_gifs:
-                rollouts["frames"].append(env.render('rgb_array')[0])
-            calc_end = time.time()
-            elapsed = calc_end - calc_start
-            if elapsed < ifi:
-                time.sleep(ifi - elapsed)
-            if render:
-                env.render('human')
-
-        # episodic summary 
-        if logger is not None:
-            # rewards (T,N) -> (N,T)
-            agent_rewards = list(zip(*episode_rewards))
-            agent_mean_rewards = [np.mean(ar) for ar in agent_rewards]
-            episode_mean_reward = np.mean(agent_rewards)
-            n_agents = len(agent_rewards)
-            
-            log_str = "eps_mean_rew: {}".format(episode_mean_reward)
-            log_str += " | " + " ".join([
-                "agent_{}: {}".format(i, agent_mean_rewards[i]) 
-                for i in range(n_agents)
-            ])
-            logger.info(log_str)
-
-    # save rollouts 
-    if save_dir is not None:
-        with open(os.path.join(save_dir, "eval_rollouts.pkl"), "w") as f:
-            pickle.dump(rollouts, f)
-
-        if config.save_gifs:
-            if config.save_gifs_num < 0:
-                gif_num = config.n_episodes
-            else:
-                gif_num = min(config.save_gifs_num, config.n_episodes)
-            imageio.mimsave(os.path.join(save_dir, "eval_frames.gif"),
-                            rollouts["frames"][:gif_num], duration=ifi)
-
-    return rollouts 
-
-###############################################
-
 def maddpg_rollout_runner(maddpg, runner, n_episodes=10, episode_length=25, logger=None, 
-                    render=False, save_dir=None, fps=20, save_gifs=False, save_gifs_num=-1, **kwargs):
+                    render=False, save_dir=None, fps=20, save_gifs=False, save_gifs_num=-1, 
+                    log_agent_returns=True, **kwargs):
     """ get rollouts with runner 
     """
     eval_rollouts = []
-    eval_results = []
 
     n_test_runs = max(1, n_episodes // runner.batch_size)
     assert n_episodes // runner.batch_size == 0, "n_episodes should be divisible by batch_size"
     maddpg.prep_rollouts(device=config.device)
 
     for _ in range(n_test_runs):
-        eval_batch, eval_res = runner.run(test_mode=True, render=render)
+        eval_batch, eval_res = runner.run(render=render)
         eval_rollouts = append(eval_batch)
         eval_results.append(eval_res)
 
     # collect evaluation stats
-    eval_rollouts = EpisodeBatch.concat(eval_rollouts)
-    eval_results = merge_dict(*eval_results)
+    eval_rollouts = eval_rollouts[0].concat(eval_rollouts[1:])
+    eval_results = eval_runner.get_summaries()
+    eval_runner.reset_summaries()
     logger.info("*** evaluation log ***")
-    log_results(t_env, eval_results, logger, mode="eval")
+    log_results(t_env, eval_results, logger, mode="eval", episodes=eval_episodes,
+                log_agent_returns=log_agent_returns)
 
     # save 
     if save_dir is not None:
@@ -206,21 +115,29 @@ def maddpg_rollout_runner(maddpg, runner, n_episodes=10, episode_length=25, logg
                 gif_num = n_episodes
             else:
                 gif_num = min(save_gifs_num, n_episodes)
+            # stack all episodes frames to 1 video sequence
             frames = [
                 eval_rollouts["frame"][i,j].cpu().numpy()
-                for i in range(gif_num) for j in range(eval_rollouts.max_sequence_length)
+                for i in range(gif_num) 
+                for j in range(eval_rollouts.max_sequence_length)
             ]
-            imageio.mimsave(os.path.join(save_dir, "eval_frames.gif"),
-                            frames, duration=ifi)
+            h, w, c = frames[0].shape
+            stacked_frames = np.stack(frames,0).astype(np.uint8).reshape(-1,h,w,c)
+            logger.log_video(os.path.join(save_dir, "eval_frames.gif", stacked_frames)
+            # imageio.mimsave(os.path.join(save_dir, "eval_frames.gif"),
+            #                 frames, duration=ifi)
 
     return eval_rollouts, eval_results
+
+###############################################
+
 
     
 #####################################################################################
 ### main
 ####################################################################################
 
-def run(config):
+def run(args):
     """ main entry func """
     # NOTE: evaluation setup
     config = setup_evaluation(args)
@@ -228,7 +145,7 @@ def run(config):
 
     # NOTE: specify `config.checkpoint` or `config.restore_model`
     if config.checkpoint > 0:
-        model_path = "checkpoints/model_ep{}.ckpt".format(config.checkpoint)
+        model_path = "checkpoints/model_{}.ckpt".format(config.checkpoint)
     else:
         model_path = "model.ckpt"
     model_path = os.path.join(config.restore, model_path)
@@ -253,13 +170,12 @@ def run(config):
     # )
 
     # NOTE: evaluate with runner 
-    obs_dims = [obsp.shape[0] sfor obsp in env.observation_space]
-    act_dims = [acsp.shape[0] if isinstance(acsp, Box) else acsp.n
-                for acsp in env.action_space]
-    scheme = get_sample_scheme(maddpg.nagents, obs_dims, act_dims)
+    scheme = get_sample_scheme(maddpg.nagents, env.observation_space, env.action_space)
     runner = EpisodeRunner(scheme, env, maddpg, logger, config.sample_batch_size,
-                            config.episode_length, device=config.device, render=True)
+                            config.episode_length, device=config.device, t_env=0, 
+                            is_training=False)
 
+    # save rollout trajectories, benchmark data and video 
     rollouts, results = maddpg_rollout_runner(
         maddpg, runner, config.n_episodes, config.episode_length, 
         logger=logger, render=True, save_dir=config.save_dir, fps=20, 

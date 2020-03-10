@@ -8,10 +8,10 @@ MODE=""
 GPU=0
 CPU=8
 MEM="15G"
-SOURCE="ray_results"
-TARGET="ray_results/cluster"
+SOURCE="exps"
+TARGET="cluster_exps"
 REMOTE_IP="justiny@q.vectorinstitute.ai"
-REMOTE_DIR="/scratch/gobi1/justiny/marl/maddpg-rllib-pytorch"
+REMOTE_DIR="/scratch/gobi1/justiny/marl/learn-to-interact/marl"
 
 
 # parse arguments (only expose useful ones)
@@ -79,4 +79,6 @@ else
 fi 
 
 
+# srun -p cpu --gres=gpu:0 -c 4 --mem=8G "<command>"
 # srun -p cpu --gres=gpu:0 -c 8 --mem=15G "<command>"
+# srun -p cpu --gres=gpu:0 -c 16 --mem=32G "<command>"

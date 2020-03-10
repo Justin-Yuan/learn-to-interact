@@ -107,7 +107,6 @@ run_discrete_comm_ablation () {
 
     run3="python algorithms/rmaddpg/run_rmaddpg.py --sub_dir debug --scenario simple_speaker_listener --env_config mpe_hierarchy/configs/simple_speaker_listener.yaml --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 2 --sample_batch_size 4 --n_updates_per_train 10 --overwrite discrete_action_space-bool-${DISCRETE_FLAG} use_oracle_pos-bool-true --tag sl-${ACTION_TYPE}-oracle-pos"
 
-
     run4="python algorithms/rmaddpg/run_rmaddpg.py --sub_dir debug --scenario simple_speaker_listener --env_config mpe_hierarchy/configs/simple_speaker_listener.yaml --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 2 --sample_batch_size 4 --n_updates_per_train 10 --overwrite discrete_action_space-bool-${DISCRETE_FLAG} use_oracle_speaker-bool-true --tag sl-${ACTION_TYPE}-oracle-speaker"
 
     run5="python algorithms/rmaddpg/run_rmaddpg.py --sub_dir debug --scenario simple_speaker_listener --env_config mpe_hierarchy/configs/simple_speaker_listener.yaml --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 2 --sample_batch_size 4 --n_updates_per_train 10 --overwrite discrete_action_space-bool-${DISCRETE_FLAG} use_oracle_speaker_goal-bool-true --tag sl-${ACTION_TYPE}-oracle-speaker-goal"
@@ -115,6 +114,22 @@ run_discrete_comm_ablation () {
     # run all in parallel
     run_concurrent "$run1" "$run2" "$run3" "$run4" "$run5"
 }
+
+####################################################################
+# With partial observable tasks 
+run_simple_tag () {
+    run1="python algorithms/rmaddpg/run_rmaddpg.py --sub_dir test  --env_config mpe_hierarchy/configs/simple_tag.yaml --scenario simple_tag --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 2 --sample_batch_size 4 --n_updates_per_train 5 --tag test" 
+
+    run2="python algorithms/rmaddpg/run_rmaddpg.py --sub_dir test  --env_config mpe_hierarchy/configs/simple_tag.yaml --scenario simple_tag --use_tensorboard --n_episodes 600000 --seed 4 --n_rollout_threads 2 --sample_batch_size 4 --n_updates_per_train 5 --tag test"
+
+    run3="python algorithms/rmaddpg/run_rmaddpg.py --sub_dir test  --env_config mpe_hierarchy/configs/simple_tag.yaml --scenario simple_tag --use_tensorboard --n_episodes 600000 --seed 5 --n_rollout_threads 2 --sample_batch_size 4 --n_updates_per_train 5 --tag test"
+
+    run4="python algorithms/rmaddpg/run_rmaddpg.py --sub_dir test  --env_config mpe_hierarchy/configs/simple_tag.yaml --scenario simple_tag --use_tensorboard --n_episodes 600000 --seed 6 --n_rollout_threads 2 --sample_batch_size 4 --n_updates_per_train 5 --tag test"
+
+    # run all in parallel
+    run_concurrent "$run1" "$run2" "$run3" "$run4" 
+}
+
 
 ####################################################################
 # With partial observable tasks 
@@ -135,11 +150,13 @@ then
 elif [ "$EXP_SET" == "comm" ]
 then
     run_discrete_comm_ablation
+elif [ "$EXP_SET" == "comm" ]
+then
+    run_simple_tag
 elif [ "$EXP_SET" == "partial" ]
 then
     run_partial_tasks
 else
     echo "Nothing to run..."
 fi
-
 
