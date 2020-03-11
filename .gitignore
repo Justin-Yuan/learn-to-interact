@@ -8,12 +8,19 @@
 
 # experiment stuff
 */exps
+*/cluster_exps
+*cluster_exps/
 */results
+*results/
 */dat
 *archived
+*/__pycache__
+*.pyc
 *__pycache__
 3rdparty/*
 __MACOSX/*
 
 # python source 
 *.pyc  
+# weird stuff auto-generated from cluster
+marl/algorithms/rmaddpg/__pycache__/rmaddpg.cpython-36.pyc
