@@ -168,6 +168,16 @@ class DDPGAgent(object):
         return q 
 
 
+    def _soft_act(self, x, requires_grad=True):    
+        """ soften action if discrete, x: (B,A) """
+        if not self.discrete_action:
+            return x 
+        if requires_grad:
+            return gumbel_softmax(x, hard=True)
+        else:
+            return onehot_from_logits(x)
+
+
     def compute_action(self, obs, h_actor=None, target=False, requires_grad=True, truncate_steps=-1):
         """ traininsg actor forward with specified policy 
         concat all actions to be fed in critics
@@ -178,14 +188,6 @@ class DDPGAgent(object):
         Returns:
             act: dict of (B,T,A) 
         """
-        def _soft_act(x):    # x: (B,A)
-            if not self.discrete_action:
-                return x 
-            if requires_grad:
-                return gumbel_softmax(x, hard=True)
-            else:
-                return onehot_from_logits(x)
-
         bs, ts, _ = obs.shape
         pi = self.target_policy if target else self.policy
 
@@ -211,7 +213,7 @@ class DDPGAgent(object):
             act = defaultdict(list)
             for act_t in seq_logits:
                 for k, a in act_t.items():
-                    act[k].append(_soft_act(a))
+                    act[k].append(self._soft_act(a, requires_grad))
             act = {
                 k: torch.stack(ac, 0).permute(1,0,2) 
                 for k, ac in act.items()
@@ -220,7 +222,7 @@ class DDPGAgent(object):
             stacked_obs = obs.reshape(bs*ts, -1)  # (B*T,O)
             act, _ = pi(stacked_obs)  # act is dict of (B*T,A)
             act = {
-                k: _soft_act(ac).reshape(bs, ts, -1)  
+                k: self._soft_act(ac, requires_grad).reshape(bs, ts, -1)  
                 for k, ac in act.items()
             }   # dict of (B,T,A)
         return act

@@ -217,7 +217,7 @@ class RMADDPG(object):
         Returns:
             out: single tensor (B,T,sum_(O_k)) or lists []*N of it
         """
-        def _flatten(x):
+        def _flatten(x, keys=None):
             if not isinstance(x, dict):
                 return x
             if keys is None:
@@ -226,9 +226,9 @@ class RMADDPG(object):
             return torch.cat([x[k] for k in keys], -1)
             
         if ma:
-            return [_flatten(ob) for ob in obs]
+            return [_flatten(ob, keys) for ob in obs]
         else:
-            return _flatten(obs)
+            return _flatten(obs, keys)
 
     def flatten_act(self, acs, keys=None, ma=False):
         """ convert actions to single tensor, if dict, 
@@ -240,7 +240,7 @@ class RMADDPG(object):
         Returns:
             out: single tensor (B,T,sum_(A_k)) or list []*N of it 
         """
-        def _flatten(x):
+        def _flatten(x, keys=None):
             if not isinstance(x, dict):
                 return x 
             if DEFAULT_ACTION in x:
@@ -251,9 +251,9 @@ class RMADDPG(object):
             return torch.cat([x[k] for k in keys], -1)
             
         if ma:
-            return [_flatten(ac) for ac in acs]
+            return [_flatten(ac, keys) for ac in acs]
         else:
-            return _flatten(acs)
+            return _flatten(acs, keys)
 
     def update(self, sample, agent_i, parallel=False, grad_norm=0.5):
         """ Update parameters of agent model based on sample from replay buffer

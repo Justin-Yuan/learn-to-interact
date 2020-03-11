@@ -206,7 +206,7 @@ class MASAC(object):
         Returns:
             out: single tensor (B,T,sum_(O_k)) or lists []*N of it
         """
-        def _flatten(x):
+        def _flatten(x, keys=None):
             if not isinstance(x, dict):
                 return x
             if keys is None:
@@ -215,9 +215,9 @@ class MASAC(object):
             return torch.cat([x[k] for k in keys], -1)
             
         if ma:
-            return [_flatten(ob) for ob in obs]
+            return [_flatten(ob, keys) for ob in obs]
         else:
-            return _flatten(obs)
+            return _flatten(obs, keys)
 
     def flatten_act(self, acs, keys=None, ma=False):
         """ convert actions to single tensor, if dict, 
@@ -229,7 +229,7 @@ class MASAC(object):
         Returns:
             out: single tensor (B,T,sum_(A_k)) or list []*N of it 
         """
-        def _flatten(x):
+        def _flatten(x, keys=None):
             if not isinstance(x, dict):
                 return x 
             if DEFAULT_ACTION in x:
@@ -240,9 +240,9 @@ class MASAC(object):
             return torch.cat([x[k] for k in keys], -1)
             
         if ma:
-            return [_flatten(ac) for ac in acs]
+            return [_flatten(ac, keys) for ac in acs]
         else:
-            return _flatten(acs)
+            return _flatten(acs, keys)
 
     def contract_logprob(self, log_probs, keys=None, ma=False):
         """ convert log probs to joint log prob
@@ -253,7 +253,7 @@ class MASAC(object):
         Returns:
             out: single tensor (B,T,1) or list []*N of it 
         """
-        def _contract(x):
+        def _contract(x, keys=None):
             if not isinstance(x, dict):
                 return x 
             if DEFAULT_ACTION in x:
@@ -266,9 +266,9 @@ class MASAC(object):
             )   # [(B,T,1)]*K -> (B,T,K) -> (B,T,1)
             
         if ma:
-            return [_contract(lp) for lp in log_probs]
+            return [_contract(lp, keys) for lp in log_probs]
         else:
-            return _contract(log_probs)
+            return _contract(log_probs, keys)
 
     def update(self, sample, agent_i, parallel=False, grad_norm=0.5):
         """ Update parameters of agent model based on sample from replay buffer
