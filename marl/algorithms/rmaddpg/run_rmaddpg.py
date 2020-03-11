@@ -57,7 +57,7 @@ def parse_args():
                         help="frequency to log training stats, e.g. losses")
     parser.add_argument("--eval_interval", default=25000, type=int,
                         help="number of steps collected before each evaluation")
-    parser.add_argument("--save_interval", default=100000, type=int)
+    parser.add_argument("--save_interval", default=500000, type=int)
     
     # misc 
     parser.add_argument("--cuda", default=False, action='store_true')

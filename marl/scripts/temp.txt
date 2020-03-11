@@ -1,11 +1,28 @@
-"python algorithms/rmaddpg/run_rmaddpg.py --sub_dir debug --scenario simple_speaker_listener --env_config mpe_hierarchy/configs/simple_speaker_listener.yaml --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 2 --sample_batch_size 4 --n_updates_per_train 5 --overwrite discrete_action_space-bool-false --tag C-sl-cont-normal --no_render"
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir test --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 4 --sample_batch_size 16 --n_updates_per_train 5 --lr 0.001 --tag C-mlp --no_render"
 
 
-"python algorithms/rmaddpg/run_rmaddpg.py --sub_dir debug --scenario simple_speaker_listener --env_config mpe_hierarchy/configs/simple_speaker_listener.yaml --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 2 --sample_batch_size 4 --n_updates_per_train 5 --overwrite discrete_action_space-bool-false use_oracle_speaker_goal-bool-true --tag C-sl-cont-oracle-speaker-goal --no_render"
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir test --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 4 --sample_batch_size 16 --n_updates_per_train 5 --lr 0.001 --actor rnn --tag C-rnn-actor --no_render"
 
 
-"python algorithms/rmaddpg/run_rmaddpg.py --sub_dir debug --scenario simple_speaker_listener --env_config mpe_hierarchy/configs/simple_speaker_listener.yaml --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 2 --sample_batch_size 4 --n_updates_per_train 5 --overwrite discrete_action_space-bool-false use_oracle_pos-bool-true --tag C-sl-cont-oracle-pos --no_render"
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir test --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 4 --sample_batch_size 16 --n_updates_per_train 5 --lr 0.001 --critic rnn --tag C-rnn-critic --no_render"
+
+
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir test --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 4 --sample_batch_size 16 --n_updates_per_train 5 --lr 0.001 --actor rnn --critic rnn --tag C-rnn-ac --no_render"
 
 
 
-"python algorithms/rmaddpg/run_rmaddpg.py --sub_dir debug --scenario simple_speaker_listener --env_config mpe_hierarchy/configs/simple_speaker_listener.yaml --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 2 --sample_batch_size 4 --n_updates_per_train 5 --overwrite discrete_action_space-bool-true use_oracle_pos-bool-true --tag C-sl-discrete-oracle-pos --no_render"
+########################
+
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir test --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 600000 --seed 4 --n_rollout_threads 4 --sample_batch_size 16 --n_updates_per_train 5 --lr 0.001 --tag C-mlp --no_render"
+
+
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir test --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 600000 --seed 4 --n_rollout_threads 4 --sample_batch_size 16 --n_updates_per_train 5 --lr 0.001 --actor rnn --tag C-rnn-actor --no_render"
+
+
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir test --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 600000 --seed 4 --n_rollout_threads 4 --sample_batch_size 16 --n_updates_per_train 5 --lr 0.001 --critic rnn --tag C-rnn-critic --no_render"
+
+
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir test --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 600000 --seed 4 --n_rollout_threads 4 --sample_batch_size 16 --n_updates_per_train 5 --lr 0.001 --actor rnn --critic rnn --tag C-rnn-ac --no_render"
+
+
+

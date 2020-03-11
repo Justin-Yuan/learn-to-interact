@@ -110,7 +110,7 @@ def make_parallel_env(env_func, env_config, batch_size, n_rollout_threads, seed)
 
 
 def log_results(t_env, results, logger, mode="sample", episodes=None, 
-        display_eps_num=4, log_agent_returns=False, **kwargs):
+        log_video=True, display_eps_num=4, log_agent_returns=False, **kwargs):
     """ training & evaluation logging 
     Arguments:
         - t_env: env step 
@@ -134,7 +134,7 @@ def log_results(t_env, results, logger, mode="sample", episodes=None,
                 logger.add_scalar("{}/{}_returns_std".format(mode, k), np.std(a_returns), t_env)
 
         # log videos 
-        if episodes is not None and "frame" in episodes.scheme:
+        if log_video and episodes is not None and "frame" in episodes.scheme:
             frames = episodes["frame"]  # (B,T,H,W,C)
             b, t, h, w, c = frames.shape
             display_num = min(b, display_eps_num) 

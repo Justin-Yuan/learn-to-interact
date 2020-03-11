@@ -1,4 +1,7 @@
 import os 
+import sys 
+# path at level marl/
+sys.path.insert(0, os.path.abspath("."))
 import time
 import pickle 
 import imageio
@@ -10,7 +13,7 @@ import torch
 from torch.autograd import Variable
 
 from runners.make_env import ENV_MAP
-from algorithms.maddpg import RMADDPG
+from algorithms.rmaddpg import RMADDPG
 from runners.sample_batch import EpisodeBatch
 from runners.episode_runner import EpisodeRunner
 from utils.exp_utils import setup_evaluation, ExperimentLogger 
@@ -35,6 +38,7 @@ def parse_args():
                         help="additional info for experiment, i.e. hyperparameters")
     parser.add_argument("--seed", default=0, type=int,
                         help="Random seed, if negative do not set seed")
+    parser.add_argument("--cuda", default=False, action='store_true')
 
     # evaluation
     parser.add_argument("--restore", type=str, default=None,
@@ -45,9 +49,8 @@ def parse_args():
                         help="Load incremental policy from given episode (alternative to restore_model)")
     parser.add_argument("--copy_checkpoint", default=False, action="store_true",
                         help="if to copy the evaluated checkpoint to current eval directory")
-    parser.add_argument("--n_episodes", default=10, type=int)
-    parser.add_argument("--episode_length", default=25, type=int)
-    parser.add_argument("--sample_batch_size", default=1, type=int,
+    parser.add_argument("--n_episodes", default=8, type=int)
+    parser.add_argument("--sample_batch_size", default=2, type=int,
                         help="number of data points sampled () per run, use 1 for evaluation")
     parser.add_argument("--save_gifs", default=False, action="store_true",
                         help="Saves gif of each episode into model directory")
@@ -61,14 +64,20 @@ def parse_args():
                         help="name of the environment", choices=["mpe", "mpe_hier"])
     parser.add_argument("--scenario", type=str, default="simple_spread",
                         help="name of the scenario script")
-    parser.add_argument("--env_config", type=str, default="",
+    parser.add_argument("--env_config", type=str,
                         help="file to environment scenario config")
     parser.add_argument("--use_restore_env_config", default=False, action='store_true',
-                        help="if to use env config from retore dierctory")
+                        help="if to use env config from retore directory")
+    parser.add_argument("--use_restore_config", default=False, action='store_true',
+                        help="if to use exp config from retore directory")
     parser.add_argument("--episode_length", default=25, type=int,
                         help="max episode length")
     parser.add_argument("--show_visual_range", default=False, action='store_true', 
                         help='if to show agent visual range when rendering')
+    
+    # parallelism 
+    parser.add_argument("--n_rollout_threads", default=1, type=int, 
+                        help="number of parallel sampling workers to use")
 
     args = parser.parse_args()
     return args
@@ -78,35 +87,34 @@ def parse_args():
 ### eval funcs 
 ####################################################################################
 
-def maddpg_rollout_runner(maddpg, runner, n_episodes=10, episode_length=25, logger=None, 
+def maddpg_rollout_runner(config, maddpg, runner, n_episodes=10, episode_length=25, logger=None, 
                     render=False, save_dir=None, fps=20, save_gifs=False, save_gifs_num=-1, 
                     log_agent_returns=True, **kwargs):
     """ get rollouts with runner 
     """
-    eval_rollouts = []
+    eval_episodes = []
 
     n_test_runs = max(1, n_episodes // runner.batch_size)
-    assert n_episodes // runner.batch_size == 0, "n_episodes should be divisible by batch_size"
+    assert n_episodes % runner.batch_size == 0, "n_episodes should be divisible by batch_size"
     maddpg.prep_rollouts(device=config.device)
 
     for _ in range(n_test_runs):
         eval_batch, eval_res = runner.run(render=render)
-        eval_rollouts = append(eval_batch)
-        eval_results.append(eval_res)
+        eval_episodes.append(eval_batch)
 
     # collect evaluation stats
-    eval_rollouts = eval_rollouts[0].concat(eval_rollouts[1:])
-    eval_results = eval_runner.get_summaries()
-    eval_runner.reset_summaries()
+    eval_episodes = eval_episodes[0].concat(eval_episodes[1:])
+    eval_results = runner.get_summaries()
+    runner.reset_summaries()
     logger.info("*** evaluation log ***")
-    log_results(t_env, eval_results, logger, mode="eval", episodes=eval_episodes,
-                log_agent_returns=log_agent_returns)
+    log_results(runner.t_env, eval_results, logger, mode="eval", episodes=eval_episodes,
+                log_video=False, log_agent_returns=log_agent_returns)
 
     # save 
     if save_dir is not None:
-        with open(os.path.join(save_dir, "eval_rollouts.pkl"), "w") as f:
-            pickle.dump(eval_rollouts, f)
-        with open(os.path.join(save_dir, "eval_results.pkl"), "w") as f:
+        # with open(os.path.join(save_dir, "eval_rollouts.pkl"), "w") as f:
+        #     pickle.dump(eval_episodes, f)
+        with open(os.path.join(save_dir, "eval_results.pkl"), "wb") as f:
             pickle.dump(eval_results, f)
 
         ifi = 1 / fps  # inter-frame interval
@@ -117,17 +125,16 @@ def maddpg_rollout_runner(maddpg, runner, n_episodes=10, episode_length=25, logg
                 gif_num = min(save_gifs_num, n_episodes)
             # stack all episodes frames to 1 video sequence
             frames = [
-                eval_rollouts["frame"][i,j].cpu().numpy()
+                eval_episodes["frame"][i,j].cpu().numpy()
                 for i in range(gif_num) 
-                for j in range(eval_rollouts.max_sequence_length)
+                for j in range(eval_episodes.max_seq_length)
             ]
             h, w, c = frames[0].shape
             stacked_frames = np.stack(frames,0).astype(np.uint8).reshape(-1,h,w,c)
-            logger.log_video(os.path.join(save_dir, "eval_frames.gif", stacked_frames)
+            logger.log_video("eval_frames.gif", stacked_frames)
             # imageio.mimsave(os.path.join(save_dir, "eval_frames.gif"),
             #                 frames, duration=ifi)
-
-    return eval_rollouts, eval_results
+    return eval_episodes, eval_results
 
 ###############################################
 
@@ -177,7 +184,7 @@ def run(args):
 
     # save rollout trajectories, benchmark data and video 
     rollouts, results = maddpg_rollout_runner(
-        maddpg, runner, config.n_episodes, config.episode_length, 
+        config, maddpg, runner, config.n_episodes, config.episode_length, 
         logger=logger, render=True, save_dir=config.save_dir, fps=20, 
         save_gifs=True, save_gifs_num=config.save_gifs_num
     )

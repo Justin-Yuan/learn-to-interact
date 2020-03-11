@@ -279,12 +279,19 @@ def setup_evaluation(args):
     """
     assert args.restore is not None and os.path.exists(args.restore)
 
+    # if to use original exp config 
+    if args.use_restore_config:
+        orig_config = read_file(args.restore + "/config.yaml")
+        for k in ["exp", "sub_dir", "tag", "seed", "env", "scenario"]:
+            setattr(args, k, orig_config[k])
+
     exp_dir = [args.save_dir]
-    temp = ""   # top-level dir
+    temp = []   # top-level dir
+
     for e in ["exp", "env", "scenario"]:    
         if hasattr(args, e):
-            temp += "_" + getattr(args, e).replace("_", "-")
-    exp_dir.append(temp)
+            temp.append(getattr(args, e).replace("_", "-"))
+    exp_dir.append("_".join(temp))
 
     if args.sub_dir is not None and len(args.sub_dir) > 0:
         exp_dir += args.sub_dir
@@ -300,11 +307,11 @@ def setup_evaluation(args):
 
     # restore 
     restore_dir = args.restore
-    if args.use_restore_env_config:
-        env_config = read_file(config.restore + "/env_config.yaml")
+    if args.use_restore_env_config or args.env_config is None:
+        env_config = read_file(args.restore + "/env_config.yaml")
     else:
         env_config = read_file(args.env_config)
-
+    
     # config snapshot 
     args_dict = vars(args)
     with open(args.save_dir+"/config.yaml", "w") as f:
@@ -317,6 +324,10 @@ def setup_evaluation(args):
     # set checkpoint path
     if config.restore_model is None:
         config.restore_model = args.restore + "/model.ckpt"
+
+    # set device 
+    use_cuda = config.cuda and torch.cuda.is_available()
+    config.device = "cuda" if use_cuda else "cpu"
 
     # set seed 
     seed = config.seed 
@@ -447,7 +458,8 @@ class ExperimentLogger(object):
 
     def add_scalar(self, name, val, iter):
         self.logger.log(name, val, iter)
-        self.tensorboard_writer.add_scalar(name, val, iter)
+        if self.use_tensorboard:
+            self.tensorboard_writer.add_scalar(name, val, iter)
 
     def add_images(self, name, image_tensor, iter):
         """ images: (N,C,H,W) """ 
@@ -474,7 +486,8 @@ class ExperimentLogger(object):
         self.tensorboard_writer.export_scalars_to_json(self.log_dir + "/" + summary_path)
 
     def close(self):
-        self.tensorboard_writer.close()
+        if self.use_tensorboard:
+            self.tensorboard_writer.close()
 
 
 
