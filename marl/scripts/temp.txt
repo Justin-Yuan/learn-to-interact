@@ -26,3 +26,22 @@ srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py
 
 
 
+
+
+######################## relaxed tag 
+
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G  "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir adv2landmark0 --env_config mpe_hierarchy/configs/simple_tag.yaml --scenario simple_tag --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 4 --sample_batch_size 16 --n_updates_per_train 5 --tag test-lr0.001 --log_agent_returns --overwrite num_landmarks-int-0 num_adversaries-int-2 shape_rewards-bool-false --lr 0.001 --no_render"
+
+
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G  "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir adv2landmark0 --env_config mpe_hierarchy/configs/simple_tag.yaml --scenario simple_tag --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 4 --sample_batch_size 16 --n_updates_per_train 5 --tag test-shape-lr0.001 --log_agent_returns --overwrite num_landmarks-int-0 num_adversaries-int-2 shape_rewards-bool-true --lr 0.001 --no_render"
+
+
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G  "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir adv2landmark0 --env_config mpe_hierarchy/configs/simple_tag.yaml --scenario simple_tag --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 4 --sample_batch_size 16 --n_updates_per_train 5 --tag test-per-adv-lr0.001 --log_agent_returns --overwrite num_landmarks-int-0 num_adversaries-int-2 shape_rewards-bool-false per_adv_rewards-bool-true --lr 0.001 --no_render"
+
+
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G  "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir adv2landmark0 --env_config mpe_hierarchy/configs/simple_tag.yaml --scenario simple_tag --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 4 --sample_batch_size 16 --n_updates_per_train 5 --tag test-shape-per-adv-lr0.001 --log_agent_returns --overwrite num_landmarks-int-0 num_adversaries-int-2 shape_rewards-bool-true per_adv_rewards-bool-true --lr 0.001 --no_render"
+
+
+######################## relaxed comm
+
+

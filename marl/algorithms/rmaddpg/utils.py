@@ -181,3 +181,16 @@ def log_results(t_env, results, logger, mode="sample", episodes=None,
         
     else:
         raise NotImplementedError("logging option not supported!")
+
+
+
+def log_weights(learner, logger, t_env):
+    """ log network weights for debug 
+    """
+    for i, agent in enumerate(learner.agents):
+        agent_actor_params = {
+            "policy_{}_{}".format(i, k): v for k, v in agent.policy.named_parameters()}
+        agent_critic_params = {
+            "critic_{}_{}".format(i, k): v for k, v in agent.critic.named_parameters()}
+        logger.add_histogram_dict(agent_actor_params, t_env)
+        logger.add_histogram_dict(agent_critic_params, t_env)

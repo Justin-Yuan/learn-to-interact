@@ -12,6 +12,7 @@ import torch
 # local
 from algorithms.rmaddpg.utils import get_sample_scheme, dispatch_samples
 from algorithms.rmaddpg.utils import make_parallel_env, log_results
+from algorithms.rmaddpg.utils import log_weights
 from algorithms.rmaddpg import RMADDPG
 
 from runners.make_env import ENV_MAP
@@ -314,6 +315,9 @@ def run(args):
                         log_agent_returns=config.log_agent_returns)
             estate.last_test_t = t_env
 
+            # NOTE: debug noly, log network weights
+            log_weights(maddpg, logger, t_env)
+               
         ############################################
         # NOTE: checkpoint 
         if (estate.last_save_t == 0) or (t_env - estate.last_save_t >= config.save_interval): 

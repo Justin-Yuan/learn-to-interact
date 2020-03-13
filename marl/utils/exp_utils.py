@@ -461,6 +461,15 @@ class ExperimentLogger(object):
         if self.use_tensorboard:
             self.tensorboard_writer.add_scalar(name, val, iter)
 
+    def add_histogram(self, name, val_array, iter):
+        self.tensorboard_writer.add_histogram(name, val_array, iter)
+
+    def add_histogram_dict(self, val_dict, iter):
+        """ take in dict of named parameters (e.g. network weights) """
+        if self.use_tensorboard:
+            for k, v in val_dict.items():
+                self.add_histogram(k, v, iter)
+
     def add_images(self, name, image_tensor, iter):
         """ images: (N,C,H,W) """ 
         self.tensorboard_writer.add_images(name, image_tensor, iter)

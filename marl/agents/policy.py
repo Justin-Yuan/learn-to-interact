@@ -46,7 +46,8 @@ class Policy(nn.Module):
             self.multi_output = False
             self.base_head = policy_net_fn(num_in_pol, num_out_pol,
                                  hidden_dim=hidden_dim,
-                                 constrain_out=True,
+                                #  constrain_out=True,
+                                 constrain_out=constrain_out,
                                  discrete_action=discrete_action,
                                  use_head=True)
         
