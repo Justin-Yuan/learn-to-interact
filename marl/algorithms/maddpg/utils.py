@@ -1,5 +1,6 @@
 import os
 import time
+import random 
 import numpy as np
 from gym.spaces import Box, Discrete, Dict
 from collections import OrderedDict, defaultdict
@@ -89,9 +90,14 @@ def make_parallel_env(env_func, env_config, batch_size, n_rollout_threads, seed)
             env = env_func(**env_config)
             # do not set seed i if -1 (e.g. for evaluation)
             if seed >= 0:
-                env.seed(seed + rank * 1000)
+                # env.seed(seed + rank * 1000)
                 random.seed(seed + rank * 1000)
                 np.random.seed(seed + rank * 1000)
+                torch.manual_seed(seed + rank * 1000)
+                # mpe has its own seeding 
+                env = env_func(seed=seed + rank * 1000, **env_config)
+            else:
+                env = env_func(**env_config)
             return env
         return init_env
 
@@ -103,7 +109,8 @@ def make_parallel_env(env_func, env_config, batch_size, n_rollout_threads, seed)
         return DummyVecEnv(envs)
 
 
-def log_results(t_env, results, logger, mode="sample"):
+def log_results(t_env, results, logger, mode="sample", episodes=None, 
+        log_video=True, display_eps_num=4, log_agent_returns=False, **kwargs):
     """ training & evaluation logging 
     Arguments:
         - t_env: env step 
@@ -111,6 +118,9 @@ def log_results(t_env, results, logger, mode="sample"):
         - logger: experiment logger
         - mode: sample|train|eval
     """
+    # print current directory for easier identification 
+    logger.info(logger.log_dir)
+
     if (mode == "sample") or (mode == "eval"):
         # exploration/evaluation episode stats, e.g. returns, lengths
         returns = results["returns"]
@@ -118,13 +128,27 @@ def log_results(t_env, results, logger, mode="sample"):
 
         logger.add_scalar("{}/returns_mean".format(mode), np.mean(returns), t_env)
         logger.add_scalar("{}/returns_std".format(mode), np.std(returns), t_env)
-        for k, a_returns in agent_returns:
-            logger.add_scalar("{}/{}_returns_mean".format(mode, k), np.mean(a_returns), t_env)
-            logger.add_scalar("{}/{}_returns_std".format(mode, k), np.std(a_returns), t_env)
+        if log_agent_returns:
+            for k, a_returns in agent_returns:
+                logger.add_scalar("{}/{}_returns_mean".format(mode, k), np.mean(a_returns), t_env)
+                logger.add_scalar("{}/{}_returns_std".format(mode, k), np.std(a_returns), t_env)
+
+        # log videos 
+        if log_video and episodes is not None and "frame" in episodes.scheme:
+            frames = episodes["frame"]  # (B,T,H,W,C)
+            b, t, h, w, c = frames.shape
+            display_num = min(b, display_eps_num) 
+            frames = frames[:display_num] 
+            # # tb accepts (N,T,C,H,W)
+            # vid_tensor = frames.permute(0,1,4,2,3) * 255
+            # logger.add_video("{}/frames".format(mode), vid_tensor, t_env)
+            # save to local 
+            stacked_frames = frames.data.cpu().numpy().astype(np.uint8).reshape(-1,h,w,c)
+            logger.log_video("{}_video.gif".format(mode), stacked_frames)
 
         log_str = "t_env: {} | mean returns: {}".format(t_env, np.mean(returns))
-        temp = ", ".join(["{}: {}".format(k, np.mean(v)) for k, v in sorted(agent_returns.items())])
-        log_str += " | " + temp
+        # temp = ", ".join(["{}: {}".format(k, np.mean(v)) for k, v in sorted(agent_returns.items())])
+        # log_str += " | " + temp
         logger.info(log_str)
 
     elif mode == "train":
@@ -150,10 +174,22 @@ def log_results(t_env, results, logger, mode="sample"):
             logger.add_scalar("{}/{}_mean".format(mode, loss_name), np.mean(loss), t_env)      
             logger.add_scalar("{}/{}_std".format(mode, loss_name), np.std(loss), t_env)      
     
-        log_str = "t_env: {}".format(t_env）
+        log_str = "t_env: {}".format(t_env)
         temp = " | ".join(["{}: {}".format(k, np.mean(v)) for k, v in sorted(loss_dict.items())])
         log_str += " | " + temp
         logger.info(log_str)
         
     else:
         raise NotImplementedError("logging option not supported!")
+
+
+def log_weights(learner, logger, t_env):
+    """ log network weights for debug 
+    """
+    for i, agent in enumerate(learner.agents):
+        agent_actor_params = {
+            "policy_{}_{}".format(i, k): v for k, v in agent.policy.named_parameters()}
+        agent_critic_params = {
+            "critic_{}_{}".format(i, k): v for k, v in agent.critic.named_parameters()}
+        logger.add_histogram_dict(agent_actor_params, t_env)
+        logger.add_histogram_dict(agent_critic_params, t_env)

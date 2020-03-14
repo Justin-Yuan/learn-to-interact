@@ -119,7 +119,7 @@ class EpisodeRunner(BaseRunner):
             batch.update(transition_data, ts=self.t)
 
             # update episode stats 
-            for i in range(self.env.nenvs):
+            for i in range(self.batch_size):
                 episode_lengths[i] += 1
                 episode_returns[i] += sum(rewards[i])
                 for a in range(self.mac.nagents):

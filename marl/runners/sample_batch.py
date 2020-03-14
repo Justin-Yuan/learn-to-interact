@@ -17,7 +17,7 @@ class SampleBatch(object):
         """
         self.scheme = scheme.copy()
         self.batch_size = batch_size
-        self.device = device
+        self.device = device 
 
         if data is not None:
             self.data = data 
@@ -29,7 +29,7 @@ class SampleBatch(object):
         return "SampleBatch. Batch Size:{}, Keys:{}".format(
             self.batch_size, self.scheme.keys())
 
-    def _setup_data(self, scheme, batch_size, max_seq_length):
+    def _setup_data(self, scheme, batch_size):
         """ initialize sample containers 
         """
         for field_key, field_info in scheme.items():
@@ -63,8 +63,8 @@ class SampleBatch(object):
         """
         if len(samples) < 1:
             return self 
-        if not all([isinstance(s, EpisodeBatch) for s in samples]):
-            raise Exception("Require all EpisodeBatch to concatenate!")
+        if not all([isinstance(s, SampleBatch) for s in samples]):
+            raise Exception("Require all SampleBatch to concatenate!")
         
         # check matching 
         if not all([self.scheme == s.scheme for s in samples[1:]]):
@@ -83,7 +83,34 @@ class SampleBatch(object):
         ret = SampleBatch(self.scheme, new_batch_size, data=new_data, device=self.device)
         return ret  
 
-    def _parse_slices(self, items):
+    def time_stack(self, samples):
+        """ stack multiple SampleBatch to form an EpisodeBatch
+        Arguments: 
+            samples: SampleBatch or list of SampleBatch
+        Returns:
+            ret: data stacked (in time) EpisodeBatch
+        """
+        if len(samples) < 1:
+            ebatch = EpisodeBatch(self.scheme, self.batch_size, 1, device=self.device)
+            ebatch.update(self.data, ts=0)
+            return ebatch 
+        if not all([isinstance(s, SampleBatch) for s in samples]):
+            raise Exception("Require all SampleBatch to stack!")
+        
+         # check matching 
+        if not all([self.scheme == s.scheme for s in samples[1:]]):
+            raise Exception("Samples scheme do not match!")
+        if not all([self.device == s.device for s in samples[1:]]):
+            raise Exception("Samples device do not match!")
+        samples = [self] + samples
+
+        # populate EpisodeBatch, assume samplse come in order
+        ebatch = EpisodeBatch(self.scheme, self.batch_size, len(samples), device=self.device)
+        for t, s in enumerate(samples):
+            ebatch.update(s.data, ts=t)
+        return ebatch
+
+    def _parse_slices(self, item):
         """ get valid slices for batch, each slice is a:b or None
             Convert single indice to slice
         """
@@ -129,8 +156,8 @@ class SampleBatch(object):
             # request a slice (batch_slice,) -> pack to SampleBatch
             item = self._parse_slices(item)
             new_data = {}
-            for k, v in self.data.transition_data.items():
-                new_data.transition_data[k] = v[item]
+            for k, v in self.data.items():
+                new_data[k] = v[item]
             ret_bs = self._get_num_items(item, self.batch_size)
             ret = SampleBatch(self.scheme, ret_bs, data=new_data, device=self.device)
             return ret
@@ -239,9 +266,9 @@ class EpisodeBatch(object):
 
         for field_key, field_info in self.scheme.items():
             episodic = field_info.get("episodic", False)
-            target = lambda x: x.episode_data if episodic else x.transition_data
-            target(new_data)[field_key] = torch.cat([
-                target(s.data)[field_key] for s in samples
+            target = lambda x, eps: x.episode_data if eps else x.transition_data
+            target(new_data, episodic)[field_key] = torch.cat([
+                target(s.data, episodic)[field_key] for s in samples
             ], 0)
 
         ret = EpisodeBatch(self.scheme, new_batch_size, 

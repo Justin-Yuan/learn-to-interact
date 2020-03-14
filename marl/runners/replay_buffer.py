@@ -10,11 +10,12 @@ from runners.sample_batch import SampleBatch, EpisodeBatch
 class ReplayBuffer(SampleBatch):
     """ for mlp policy training, return batch of transitions (may not from same episode)
     """
-    def __init__(self, scheme, buffer_size, device="cpu"):
+    def __init__(self, scheme, buffer_size, device="cpu", prefill_num=1024):
         super(ReplayBuffer, self).__init__(scheme, buffer_size, device=device)
         self.buffer_size = buffer_size  # same as self.batch_size but more explicit
         self.buffer_index = 0
         self.samples_in_buffer = 0 
+        self.prefill_num = prefill_num
     
     def __len__(self):
         return self.samples_in_buffer
@@ -37,7 +38,7 @@ class ReplayBuffer(SampleBatch):
             self.insert_batch(batch[buffer_left:, :])
  
     def can_sample(self, batch_size):
-        return self.samples_in_buffer >= batch_size
+        return self.samples_in_buffer >= self.prefill_num
 
     def sample(self, batch_size, norm_rews=False):
         """ return SampleBatch 

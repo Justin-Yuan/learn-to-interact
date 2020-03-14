@@ -17,6 +17,7 @@ class MADDPG(object):
     def __init__(self, agent_init_params, alg_types,
                  gamma=0.95, tau=0.01, lr=0.01, hidden_dim=64,
                 #  discrete_action=False
+                **kwargs
         ):
         """
         Inputs:
@@ -125,7 +126,7 @@ class MADDPG(object):
 
     @classmethod
     def init_from_env(cls, env, agent_alg="MADDPG", adversary_alg="MADDPG",
-                      gamma=0.95, tau=0.01, lr=0.01, hidden_dim=64):
+                      gamma=0.95, tau=0.01, lr=0.01, hidden_dim=64, **kwargs):
         """
         Instantiate instance of this class from multi-agent environment
         """
@@ -150,6 +151,9 @@ class MADDPG(object):
             'agent_init_params': agent_init_params,
             # 'discrete_action': discrete_action,
         }
+        # algo specific configs
+        init_dict.update(kwargs)
+
         instance = cls(**init_dict)
         instance.init_dict = init_dict
         return instance
@@ -175,14 +179,18 @@ class MADDPG(object):
         Returnss:
             actions: List of action (np array or dict of it) for each agent
         """
-        actions = []
-        for a, obs in zip(self.agents, observations):
-            action = a.step(obs, explore=explore)  # dict (B,A)
-            if DEFAULT_ACTION in action:
-                actions.append(action[DEFAULT_ACTION])
-            else:
-                actions.append(action)
-        return actions
+        # actions = []
+        # for a, obs in zip(self.agents, observations):
+        #     action = a.step(obs, explore=explore)  # dict (B,A)
+        #     if DEFAULT_ACTION in action:
+        #         actions.append(action[DEFAULT_ACTION])
+        #     else:
+        #         actions.append(action)
+        # return actions
+        return [
+            a.step(obs, explore=explore) 
+            for a, obs in zip(self.agents, observations)
+        ]
 
     ############################################ NOTE: update
     def update_all_targets(self):
@@ -210,7 +218,7 @@ class MADDPG(object):
         Returns:
             out: single tensor (B,T,sum_(O_k)) or lists []*N of it
         """
-        def _flatten(ob):
+        def _flatten(ob, keys=None):
             if not isinstance(ob, dict):
                 return ob
             if keys is None:
@@ -219,9 +227,9 @@ class MADDPG(object):
             return torch.cat([ob[k] for k in keys], -1)
             
         if ma:
-            return [_flatten(ob) for ob in obs]
+            return [_flatten(ob, keys) for ob in obs]
         else:
-            return _flatten(obs)
+            return _flatten(obs, keys)
 
     def flatten_act(self, acs, keys=None, ma=False):
         """ convert actions to single tensor, if dict, 
@@ -233,7 +241,7 @@ class MADDPG(object):
         Returns:
             out: single tensor (B,T,sum_(A_k)) or list []*N of it 
         """
-        def _flatten(ac):
+        def _flatten(ac, keys=None):
             if DEFAULT_ACTION in ac:
                 # equivalent to single action     
                 return ac[DEFAULT_ACTION]
@@ -242,9 +250,9 @@ class MADDPG(object):
             return torch.cat([ac[k] for k in keys], -1)
             
         if ma:
-            return [_flatten(ac) for ac in acs]
+            return [_flatten(ac, keys) for ac in acs]
         else:
-            return _flatten(acs)
+            return _flatten(acs, keys)
 
     def add_virtual_dim(self, sample):
         """ since ddpg agent takes in obs (B,T,O)
@@ -280,6 +288,7 @@ class MADDPG(object):
         """
         # [(B,1,D)]*N or [dict (B,1,D)]*N
         obs, acs, rews, next_obs, dones = self.add_virtual_dim(sample)   
+        bs, ts, _ = obs[agent_i].shape 
         curr_agent = self.agents[agent_i]
 
         # NOTE: Critic update
@@ -341,7 +350,8 @@ class MADDPG(object):
             all_pol_acs = []
             for i, pi, ob in zip(range(self.nagents), self.policies, obs):
                 if i == agent_i:    # insert current agent act to q input 
-                    all_pol_acs.append(curr_pol_out)
+                    all_pol_acs.append(self.flatten_act(curr_pol_out))
+                    # all_pol_acs.append(curr_pol_out)
                 else: 
                     p_act_i = self.agents[i].compute_action(ob, target=False, requires_grad=False) 
                     all_pol_acs.append(p_act_i)
@@ -373,7 +383,7 @@ class MADDPG(object):
             torch.nn.utils.clip_grad_norm(curr_agent.policy.parameters(), grad_norm)
         curr_agent.policy_optimizer.step()
 
-        # collect training statss 
+        # NOTE: collect training statss 
         results = {}
         for k, v in zip(
             ["critic_loss", "policy_loss", "policy_reg_loss"], 

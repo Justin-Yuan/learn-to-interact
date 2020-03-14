@@ -1,4 +1,7 @@
 import os
+import sys 
+# path at level marl/
+sys.path.insert(0, os.path.abspath("."))
 import time
 import argparse
 import numpy as np
@@ -8,7 +11,8 @@ import torch
 
 # local
 from algorithms.maddpg.utils import get_sample_scheme, dispatch_samples
-from algorithms.madpg.utils import make_parallel_env, log_results
+from algorithms.maddpg.utils import make_parallel_env, log_results
+from algorithms.maddpg.utils import log_weights
 from algorithms.maddpg import MADDPG
 
 from runners.make_env import ENV_MAP
@@ -36,14 +40,18 @@ def parse_args():
                         help="Random seed, if 0, do not set seed")
     parser.add_argument("--restore", type=str, default=None,
                         help="directory in which training state and model are loaded")
+    # if specified and not restore, will load model for experiment init
+    # if also restore, will overwrite default path in restore_experiment
+    parser.add_argument("--restore_model", type=str, default=None,
+                        help="file in which model are loaded")
     ## NOTE: episode-wise or transition-wise (per transtion now, easier to log)
     parser.add_argument("--log_interval", default=1000, type=int,
                         help="frequency to log exploration/runner stats")
-    parser.add_argument("--train_interval", default=0, type=int,
+    parser.add_argument("--train_interval", default=100, type=int,
                         help="number of steps collected before each train")
     # parser.add_argument("--steps_per_update", default=100, type=int,
     #                     help="number of env steps collected before 1 training update")
-    parser.add_argument("--target_update_interval", default=100, type=int,
+    parser.add_argument("--target_update_interval", default=0, type=int,
                         help="syncing parameters with target networks")
     parser.add_argument("--train_log_interval", default=1000, type=int,
                         help="frequency to log training stats, e.g. losses")
@@ -95,6 +103,8 @@ def parse_args():
     parser.add_argument("--tau", default=0.01, type=float)
     parser.add_argument("--gamma", type=float, default=0.95,
                         help="discount factor")
+    parser.add_argument("--sync_samples", default=False, action='store_true',
+                        help="if to use synchronized samples for each agent training")
     
     # exploration/sampling 
     ## NOTE: episode-wise or transition-wise (per episodes now)
@@ -120,6 +130,10 @@ def parse_args():
     parser.add_argument("--no_render", default=False, action='store_true', 
                         help='if to stop rendering in evaluation rollouts')
     parser.add_argument("--eval_n_episodes", default=20, type=int)
+
+    # loggings 
+    parser.add_argument("--log_agent_returns", default=False, action='store_true',
+                        help="if to log per agent returns on tensorboard")
 
     # parallelism 
     parser.add_argument("--n_rollout_threads", default=4, type=int, 
@@ -159,12 +173,16 @@ def run(args):
                         show_visual_range=config.show_visual_range)
     env = make_parallel_env(p_env_func, config.env_config, config.sample_batch_size, 
                             config.n_rollout_threads, config.seed)
+    if not config.no_eval:
+        eval_env = make_parallel_env(p_env_func, config.env_config, 
+                                # config.sample_batch_size, 
+                                2, 1, config.seed)
 
     # NOTE: make learner agent 
-    if is_restore:
-        maddpg = MADDPG.init_from_save(config.restore_model)
+    if is_restore or config.restore_model is not None:
+        learner = MADDPG.init_from_save(config.restore_model)
     else:
-        maddpg = MADDPG.init_from_env(
+        learner = MADDPG.init_from_env(
             env, 
             agent_alg=config.agent_alg,
             adversary_alg=config.adversary_alg,
@@ -174,27 +192,32 @@ def run(args):
         )
 
     # NOTE: make sampling runner (env wrapper)  
-    scheme = get_sample_scheme(maddpg.nagents, env.observation_space, env.action_space)
-    runner = StepRunner(scheme, env, maddpg, logger, config.sample_batch_size,
+    scheme = get_sample_scheme(learner.nagents, env.observation_space, env.action_space)
+    runner = StepRunner(scheme, env, learner, logger, config.sample_batch_size,
                             config.episode_length, device=config.device, t_env=t_env)
     if not config.no_eval:
-        eval_runner = StepRunner(scheme, env, maddpg, logger, config.sample_batch_size,
-                            config.episode_length, device=config.device, t_env=t_env, 
+        eval_runner = StepRunner(scheme, eval_env, learner, logger, 
+                            # config.sample_batch_size,
+                            2, config.episode_length, device=config.device, t_env=t_env, 
                             is_training=False)
-    buffer = ReplayBuffer(scheme, config.max_buffer_size * config.episode_length, device=config.device)
+    buffer = ReplayBuffer(scheme, config.max_buffer_size * config.episode_length, device=config.device,
+                            prefill_num=2*config.batch_size * config.episode_length)
 
     # NOTE: start training
     logger.info("Beginning training")
     start_time = time.time()
     last_time = start_time
+    # NOTE: since in args, batch_size is episode-wise 
+    step_batch_size = config.batch_size * config.episode_length
 
+    ############################################
     # while t_env <= t_max:
     while episode <= config.n_episodes:
 
-        maddpg.prep_rollouts(device=config.device)
+        learner.prep_rollouts(device=config.device)
         explr_pct_remaining = max(0, config.n_exploration_eps - episode) / config.n_exploration_eps
-        maddpg.scale_noise(config.final_noise_scale + (config.init_noise_scale - config.final_noise_scale) * explr_pct_remaining)
-        maddpg.reset_noise()
+        learner.scale_noise(config.final_noise_scale + (config.init_noise_scale - config.final_noise_scale) * explr_pct_remaining)
+        learner.reset_noise()
 
         # run an episode 
         for t_ep in range(config.episode_length):
@@ -206,87 +229,118 @@ def run(args):
             t_env = runner.t_env
             estate.t_env = t_env
 
-            # NOTE: logging (exploration/sampling)
-            if (estate.last_log_t == 0) or (t_env - estate.last_log_t >= config.log_interval):
-                logger.info("*** sampling log ***")
-                # timing 
-                logger.info("t_env: {} / {}, eps: {} / {}".format(
-                    t_env, t_max, episode, config.n_episodes))
-                logger.info("Estimated time left: {}. Time passed: {}".format(
-                    time_left(last_time, estate.last_log_t, t_env, t_max), 
-                    time_str(time.time() - start_time)
-                ))
-                last_time = time.time()
-                # log collected episode stats
-                results = runner.get_summaries()
-                runner.reset_summaries()
-                log_results(t_env, results, logger, mode="sample")
-                estate.last_log_t = t_env
-
+            ############################################
             # NOTE: training updates
             ## change to batch_size * n_updates_per_train for n_updates > 1
-            if buffer.can_sample(config.batch_size) and (t_env - estate.last_train_t >= config.train_interval):
-                maddpg.prep_training(device=config.device)
+            if buffer.can_sample(step_batch_size) and (t_env - estate.last_train_t >= config.train_interval):
+                learner.prep_training(device=config.device)
 
                 for _ in range(config.n_updates_per_train):
-                    for a_i in range(maddpg.nagents):
-                        # each agent can have different collective experience samples
-                        sample = buffer.sample(config.batch_size * config.episode_length)
+                    sample = None 
+                    for a_i in range(learner.nagents):
+
+                        if config.sync_samples:
+                            # if not None, reuse episode_sample 
+                            if sample is None:
+                                sample = buffer.sample(step_batch_size)
+                        else:
+                            # each agent can have different collective experience samples
+                            sample = buffer.sample(step_batch_size)
+
                         if sample.device != args.device:
                             sample.to(config.device)
 
                         # dispatch sample to per agent [(B,D)]*N 
-                        sample = dispatch_samples(sample, scheme, maddpg.nagents)
-                        maddpg.update(sample, a_i)  #, logger=logger)
+                        sample = dispatch_samples(sample, scheme, learner.nagents)
+                        learner.update(sample, a_i)  #, logger=logger)
 
                 # sync target networks 
                 if t_env - estate.last_target_update_t >= config.target_update_interval:
-                    maddpg.update_all_targets()
+                    learner.update_all_targets()
                     estate.last_target_update_t = t_env
 
-                maddpg.prep_rollouts(device=config.device)
+                learner.prep_rollouts(device=config.device)
                 estate.last_train_t = t_env
 
                 # collect & log trianing stats
                 if t_env - estate.last_train_log_t >= config.train_log_interval:
-                    train_results = rmaddpg.get_summaries()
-                    rmaddpg.reset_summaries()
+                    train_results = learner.get_summaries()
+                    learner.reset_summaries()
+                    logger.info("\n")
                     logger.info("*** training log ***")
                     log_results(t_env, train_results, logger, mode="train")
                     estate.last_train_log_t = t_env
 
-            # NOTE: Execute test runs once in a while
-            if not config.no_eval and ((estate.last_test_t == 0) or (t_env - estate.last_test_t >= config.eval_interval)):
-                n_test_runs = max(1, config.eval_n_episodes // runner.batch_size)
-                for _ in range(n_test_runs):
-                    for _ in range(config.episode_length):
-                        eval_runner.run(render=(not config.no_render))
-                # collect evaluation stats
-                eval_results = eval_runner.get_summaries()
-                eval_runner.reset_summaries()
-                logger.info("*** evaluation log ***")
-                log_results(t_env, eval_results, logger, mode="eval")
-                estate.last_test_t = t_env
+        ############################################
+        # NOTE: logging (exploration/sampling)
+        if (estate.last_log_t == 0) or (t_env - estate.last_log_t >= config.log_interval):
+            logger.info("\n")
+            logger.info("*** sampling log ***")
+            # timing 
+            logger.info("t_env: {} / {}, eps: {} / {}".format(
+                t_env, t_max, episode, config.n_episodes))
+            logger.info("Estimated time left: {}. Time passed: {}".format(
+                time_left(last_time, estate.last_log_t, t_env, t_max), 
+                time_str(time.time() - start_time)
+            ))
+            last_time = time.time()
+            # log collected episode stats
+            results = runner.get_summaries()
+            runner.reset_summaries()
+            log_results(t_env, results, logger, mode="sample", 
+                        log_agent_returns=config.log_agent_returns)
+            estate.last_log_t = t_env
 
-            # NOTE: checkpoint 
-            if (estate.last_save_t == 0) or (t_env - estate.last_save_t >= config.save_interval): 
-                os.makedirs(config.save_dir + "/checkpoints", exist_ok=True)
-                maddpg.save(config.save_dir + "/checkpoints" + "/model_{}.ckpt".format(t_env))
-                maddpg.save(config.save_dir + "/model.ckpt")
-                logger.info("*** checkpoint log ***")
-                logger.info("Saving models to {}".format(
-                    "/checkpoints" + "/model_{}.ckpt".format(t_env)
-                ))
-                estate.last_save_t = t_env
-                estate.save_state(config.save_dir + "/exp_state.pkl")
+        ############################################
+        # NOTE: Execute test runs once in a while
+        if not config.no_eval and ((estate.last_test_t == 0) or (t_env - estate.last_test_t >= config.eval_interval)):
+            n_test_runs = max(1, config.eval_n_episodes // runner.batch_size)
+
+            eval_episodes = [[] for _ in range(config.episode_length)]
+            for _ in range(n_test_runs):
+                for et in range(config.episode_length):
+                    eval_bt = eval_runner.run(render=(not config.no_render))
+                    eval_episodes[et].append(eval_bt)
+
+            # collect evaluation stats
+            eval_results = eval_runner.get_summaries()
+            eval_runner.reset_summaries()
+            # concat along batch dim -> list of concat' SampleBatch
+            eval_episodes = [e[0].concat(e[1:]) for e in eval_episodes]
+            # stack along time dim -> EpisodeBatch
+            eval_episodes = eval_episodes[0].time_stack(eval_episodes[1:])
+
+            logger.info("\n")
+            logger.info("*** evaluation log ***")
+            log_results(t_env, eval_results, logger, mode="eval", episodes=eval_episodes, 
+                        log_agent_returns=config.log_agent_returns)
+            estate.last_test_t = t_env
+            estate.last_test_t = t_env
+
+            # NOTE: debug noly, log network weights
+            log_weights(learner, logger, t_env)
+
+        ############################################
+        # NOTE: checkpoint 
+        if (estate.last_save_t == 0) or (t_env - estate.last_save_t >= config.save_interval): 
+            os.makedirs(config.save_dir + "/checkpoints", exist_ok=True)
+            learner.save(config.save_dir + "/checkpoints" + "/model_{}.ckpt".format(t_env))
+            learner.save(config.save_dir + "/model.ckpt")
+            logger.info("\n")
+            logger.info("*** checkpoint log ***")
+            logger.info("Saving models to {}".format(
+                "/checkpoints" + "/model_{}.ckpt".format(t_env)
+            ))
+            estate.last_save_t = t_env
+            estate.save_state(config.save_dir + "/exp_state.pkl")
 
         # end of current episode 
         episode += config.batch_size
         estate.episode = episode
         
-
+    ############################################
     # NOTE: clean up 
-    maddpg.save(config.save_dir + "/model.ckpt")    # final save
+    learner.save(config.save_dir + "/model.ckpt")    # final save
     estate.last_save_t = t_env
     estate.save_state(config.save_dir + "/exp_state.pkl")
 

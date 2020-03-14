@@ -204,7 +204,7 @@ class DDPGAgent(object):
             # rollout 
             seq_logits = rnn_forward_sequence(
                 pi, obs, h_t, truncate_steps=truncate_steps)
-            # seq_logits = [] 
+            # seq_logits = []  
             # for t in range(ts):
             #     act_t, h_t = pi(obs[:,t], h_t)  # act_t is dict (B,A)
             #     seq_logits.append(act_t)

@@ -25,13 +25,14 @@ class StepRunner(BaseRunner):
             - mac: multiagent controller (e.g. maddpgs)
             - t_env: total env step so far using runner, used when restoring training
         """
-        assert self.batch_size == self.env.nenvs, "batch_size should equal number of envs in vec_env"
+        assert batch_size == env.nenvs, "batch_size should equal number of envs in vec_env"
         self.scheme = scheme
         self.env = env
         self.mac = mac
         self.logger = logger 
         self.batch_size = batch_size
         self.max_episode_len = max_episode_len
+        self.device = device
         self.t_env = t_env  
         self.is_training = is_training
 
@@ -62,7 +63,8 @@ class StepRunner(BaseRunner):
                 self.channel = c 
                 self.render_scheme = deepcopy(self.scheme)
                 self.render_scheme["frame"] = {"vshape": (h,w,c)}
-                self.new_render_batch = partial(SampleBatch, self.render_scheme, self.batch_size, device=device)
+                self.new_render_batch = partial(SampleBatch, self.render_scheme, self.batch_size, 
+                                                device=self.device)
             return self.new_render_batch()
         else:
             return self.new_batch()
@@ -96,39 +98,29 @@ class StepRunner(BaseRunner):
             self.agent_returns[i].extend(agent_returns)
 
 
-    def end_step(self, rewards):
-        """ mark end of a step, pushed stats to episode-wise container """
-        for i in range(self.env.nenvs):
-            self.episode_lengths[i] += 1
-            self.episode_returns[i] += sum(rewards[i])
-            for a in range(self.mac.nagents):
-                self.episode_agent_returns[a][i] += rewards[i, a] 
-    
-
     def run(self, render=False):
         """ get batch of steps, one parallel step at a time 
         """
-        if t % self.max_episode_len == 0:
+        if self.t % self.max_episode_len == 0:
             self.init_episode()
 
         # empty container: EpisodeBatch
         batch = self.batch_builder(render=render)
-        is_explore = True if not test_mode else False
 
         # (B,N,D) -> [(B,D)]*N or [ [dict (D,)]*N ]*B -> [dict (B,D)]*N
         torch_obs = self.dispatch_observations(self.obs)
 
         # [dict (B,A)]*N -> [ [(A,)]*N ]*B or [ [tuple (A,)]*N ]*B
-        torch_actions = self.mac.step(torch_obs, explore=is_explore)
+        torch_actions = self.mac.step(torch_obs, explore=self.is_training)
         actions = self.group_actions(torch_actions)
 
         # step env and collect transition, each is (B,N,D)
         next_obs, rewards, dones, infos = self.env.step(actions)
-        frames = None if not render else np.stack(self.env.get_images()) # (B,H,W,C)
+        frames = None if not render else self.env.get_images() # (B,H,W,C)
 
         # incrementally build episode batch 
         transition_data = self.pack_transition(
-            obs, torch_actions, next_obs, rewards, dones, frames=frames)
+            self.obs, torch_actions, next_obs, rewards, dones, frames=frames)
         batch.update(transition_data)
 
         # update step stats 
@@ -144,10 +136,7 @@ class StepRunner(BaseRunner):
         if self.is_training:   # only update counter when training 
             self.t_env += self.env.nenvs
 
-        # push stats to tracker 
-        self.end_step(rewards)
-
-        if t % self.max_episode_len == 0:
+        if self.t % self.max_episode_len == 0:
             self.end_episode()
         return batch
 
