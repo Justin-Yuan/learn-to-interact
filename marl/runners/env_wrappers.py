@@ -42,13 +42,14 @@ def worker(remote, parent_remote, env_fn_wrappers):
                     (envs[0].observation_space, envs[0].action_space)
                 ))
             elif cmd == 'get_agent_types':
-                if all([hasattr(a, 'adversary') for a in envs[0].agents]):
-                    res = [
-                        'adversary' if a.adversary else 'agent' 
-                        for a in envs[0].agents
-                    ]
-                else:   # fully cooperative
-                    res = ['agent' for _ in envs[0].agents]
+                # if all([hasattr(a, 'adversary') for a in envs[0].agents]):
+                #     res = [
+                #         'adversary' if a.adversary else 'agent' 
+                #         for a in envs[0].agents
+                #     ]
+                # else:   # fully cooperative
+                #     res = ['agent' for _ in envs[0].agents]
+                res = envs[0].agent_types
                 remote.send(res)
             else:
                 raise NotImplementedErrors
@@ -65,6 +66,7 @@ def worker(remote, parent_remote, env_fn_wrappers):
 ######################################## misc 
 def _flatten_obs(obs):
     """ concat observations if possible, otherwise leave unchagned
+    obs is batch-sized list of agent-sized list of inner obs 
     each inner obs element can be of form:
     - np.array (same shape)
     - np.array (different shape)
@@ -208,11 +210,12 @@ class DummyVecEnv(VecEnv):
         env = self.envs[0]  
 
         VecEnv.__init__(self, len(env_fns), env.observation_space, env.action_space)
-        if all([hasattr(a, 'adversary') for a in env.agents]):
-            self.agent_types = ['adversary' if a.adversary else 'agent' for a in
-                                env.agents]
-        else:
-            self.agent_types = ['agent' for _ in env.agents]
+        # if all([hasattr(a, 'adversary') for a in env.agents]):
+        #     self.agent_types = ['adversary' if a.adversary else 'agent' for a in
+        #                         env.agents]
+        # else:
+        #     self.agent_types = ['agent' for _ in env.agents]
+        self.agent_types = env.agent_types
 
         self.ts = np.zeros(len(self.envs), dtype='int') 
         self.actions = None
@@ -224,7 +227,7 @@ class DummyVecEnv(VecEnv):
 
     def step_wait(self):
         results = [env.step(a) for (a,env) in zip(self.actions, self.envs)]
-        obs, rews, dones, infos =zip(*results)
+        obs, rews, dones, infos = zip(*results)
         self.ts += 1
         for (i, done) in enumerate(dones):
             if all(done): 

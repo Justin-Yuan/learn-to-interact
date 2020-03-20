@@ -13,6 +13,7 @@ import torch
 from algorithms.maddpg.utils import get_sample_scheme, dispatch_samples
 from algorithms.maddpg.utils import make_parallel_env, log_results
 from algorithms.maddpg.utils import log_weights
+from algorithms.maddpg.utils import switch_batch
 from algorithms.maddpg import MADDPG
 
 from runners.make_env import ENV_MAP
@@ -55,7 +56,7 @@ def parse_args():
                         help="syncing parameters with target networks")
     parser.add_argument("--train_log_interval", default=1000, type=int,
                         help="frequency to log training stats, e.g. losses")
-    parser.add_argument("--eval_interval", default=1000, type=int,
+    parser.add_argument("--eval_interval", default=10000, type=int,
                         help="number of steps collected before each evaluation")
     parser.add_argument("--save_interval", default=100000, type=int)
     
@@ -105,10 +106,13 @@ def parse_args():
                         help="discount factor")
     parser.add_argument("--sync_samples", default=False, action='store_true',
                         help="if to use synchronized samples for each agent training")
+    parser.add_argument("--norm_rewards", default=False, action='store_true',
+                        help="if to normalize rewards before training")
+ 
     
     # exploration/sampling 
     ## NOTE: episode-wise or transition-wise (per episodes now)
-    parser.add_argument("--sample_batch_size", default=8, type=int,
+    parser.add_argument("--sample_batch_size", default=4, type=int,
                         help="number of data points sampled () per run")
     parser.add_argument("--max_buffer_size", default=40000, type=int,
                         help="maximum number of samples (episodes) to save in replay buffer")
@@ -123,13 +127,22 @@ def parse_args():
 
     # model 
     parser.add_argument("--hidden_dim", default=64, type=int)
+    parser.add_argument("--norm_in", default=False, action='store_true',
+                        help="if to normalize inputs to agent networks")
+    parser.add_argument("--constrain_out", default=False, action='store_true',
+                        help="if to use tanh for network final activation")
+    # NOTE: moa stuff (optional)
+    parser.add_argument("--model_of_agents", default=False, action='store_true',
+                        help="if to use model of agents/approximate policies")
  
     # evaluation 
     parser.add_argument("--no_eval", default=False, action='store_true',
                         help="do evaluation during training")
     parser.add_argument("--no_render", default=False, action='store_true', 
                         help='if to stop rendering in evaluation rollouts')
-    parser.add_argument("--eval_n_episodes", default=20, type=int)
+    parser.add_argument("--eval_n_episodes", default=10, type=int)
+    parser.add_argument("--eval_batch_size", default=2, type=int,
+                        help="number of data points evaluated () per run")
 
     # loggings 
     parser.add_argument("--log_agent_returns", default=False, action='store_true',
@@ -174,9 +187,10 @@ def run(args):
     env = make_parallel_env(p_env_func, config.env_config, config.sample_batch_size, 
                             config.n_rollout_threads, config.seed)
     if not config.no_eval:
+        # NOTE: seed to eval env is differnet than env: seed + 100
+        # also eval env always uses 1 rollout thread 
         eval_env = make_parallel_env(p_env_func, config.env_config, 
-                                # config.sample_batch_size, 
-                                2, 1, config.seed)
+                                config.eval_batch_size, 1, config.seed+100)
 
     # NOTE: make learner agent 
     if is_restore or config.restore_model is not None:
@@ -188,28 +202,31 @@ def run(args):
             adversary_alg=config.adversary_alg,
             tau=config.tau,
             lr=config.lr,
-            hidden_dim=config.hidden_dim
+            hidden_dim=config.hidden_dim,
+            norm_in=config.norm_in,
+            constrain_out=config.constrain_out,
+            model_of_agents=config.model_of_agents
         )
 
     # NOTE: make sampling runner (env wrapper)  
     scheme = get_sample_scheme(learner.nagents, env.observation_space, env.action_space)
     runner = StepRunner(scheme, env, learner, logger, config.sample_batch_size,
-                            config.episode_length, device=config.device, t_env=t_env)
+                            config.episode_length, device=config.device, t_env=t_env,
+                            is_training=True)
     if not config.no_eval:
         eval_runner = StepRunner(scheme, eval_env, learner, logger, 
-                            # config.sample_batch_size,
-                            2, config.episode_length, device=config.device, t_env=t_env, 
-                            is_training=False)
+                            config.eval_batch_size, config.episode_length, 
+                            device=config.device, t_env=t_env, is_training=False)
+    # NOTE: since in args, batch_size is episode-wise 
+    train_batch_size_steps = config.batch_size * config.episode_length
     buffer = ReplayBuffer(scheme, config.max_buffer_size * config.episode_length, device=config.device,
-                            prefill_num=2*config.batch_size * config.episode_length)
+                            prefill_num=1*train_batch_size_steps)
 
     # NOTE: start training
     logger.info("Beginning training")
     start_time = time.time()
     last_time = start_time
-    # NOTE: since in args, batch_size is episode-wise 
-    step_batch_size = config.batch_size * config.episode_length
-
+    
     ############################################
     # while t_env <= t_max:
     while episode <= config.n_episodes:
@@ -232,32 +249,43 @@ def run(args):
             ############################################
             # NOTE: training updates
             ## change to batch_size * n_updates_per_train for n_updates > 1
-            if buffer.can_sample(step_batch_size) and (t_env - estate.last_train_t >= config.train_interval):
+            if buffer.can_sample(train_batch_size_steps) and (t_env - estate.last_train_t >= config.train_interval):
                 learner.prep_training(device=config.device)
 
                 for _ in range(config.n_updates_per_train):
+
+                    # NOTE: MOA updates (prior to actor and critic updates)
+                    if config.model_of_agents:
+                        # latest samples are the same across agents (no async)
+                        moa_index = buffer.make_latest_index(train_batch_size_steps)
+                        moa_sample = buffer.sample_index(moa_index)
+                        moa_sample = dispatch_samples(moa_sample, scheme, learner.nagents)
+                        for a_i in range(learner.nagents):
+                            learner.update_moa(moa_sample, a_i)
+
+                    # actor and critic updates
                     sample = None 
                     for a_i in range(learner.nagents):
 
                         if config.sync_samples:
                             # if not None, reuse episode_sample 
                             if sample is None:
-                                sample = buffer.sample(step_batch_size)
+                                sample = buffer.sample(train_batch_size_steps)
                         else:
                             # each agent can have different collective experience samples
-                            sample = buffer.sample(step_batch_size)
+                            sample = buffer.sample(train_batch_size_steps)
 
-                        if sample.device != args.device:
+                        if sample.device != config.device:
                             sample.to(config.device)
 
                         # dispatch sample to per agent [(B,D)]*N 
                         sample = dispatch_samples(sample, scheme, learner.nagents)
-                        learner.update(sample, a_i)  #, logger=logger)
+                        learner.update(sample, a_i, norm_rewards=config.norm_rewards)  #, logger=logger)
 
-                # sync target networks 
-                if t_env - estate.last_target_update_t >= config.target_update_interval:
-                    learner.update_all_targets()
-                    estate.last_target_update_t = t_env
+                    # sync target networks 
+                    if t_env - estate.last_target_update_t >= config.target_update_interval:
+                        learner.update_all_targets()
+                        estate.last_target_update_t = t_env
 
                 learner.prep_rollouts(device=config.device)
                 estate.last_train_t = t_env
@@ -315,7 +343,6 @@ def run(args):
             log_results(t_env, eval_results, logger, mode="eval", episodes=eval_episodes, 
                         log_agent_returns=config.log_agent_returns)
             estate.last_test_t = t_env
-            estate.last_test_t = t_env
 
             # NOTE: debug noly, log network weights
             log_weights(learner, logger, t_env)
@@ -335,7 +362,7 @@ def run(args):
             estate.save_state(config.save_dir + "/exp_state.pkl")
 
         # end of current episode 
-        episode += config.batch_size
+        episode += config.sample_batch_size
         estate.episode = episode
         
     ############################################

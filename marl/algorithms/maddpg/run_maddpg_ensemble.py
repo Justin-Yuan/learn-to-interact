@@ -10,15 +10,15 @@ from collections import OrderedDict, defaultdict
 import torch
 
 # local
-from algorithms.rmaddpg.utils import get_sample_scheme, dispatch_samples
-from algorithms.rmaddpg.utils import make_parallel_env, log_results
-from algorithms.rmaddpg.utils import log_weights
-from algorithms.rmaddpg import RMADDPG
+from algorithms.maddpg.utils import get_sample_scheme, dispatch_samples
+from algorithms.maddpg.utils import make_parallel_env, log_results
+from algorithms.maddpg.utils import log_weights
+from algorithms.maddpg.utils import switch_batch
+from algorithms.maddpg import MADDPG
 
 from runners.make_env import ENV_MAP
-from runners.sample_batch import EpisodeBatch
-from runners.episode_runner import EpisodeRunner
-from runners.replay_buffer import EpisodeReplayBuffer
+from runners.replay_buffer import ReplayBuffer
+from runners.step_runner import StepRunner
 from utils.exp_utils import setup_experiment, ExperimentLogger, ExperimentState
 from utils.exp_utils import time_left, time_str, merge_dict
 
@@ -46,26 +46,26 @@ def parse_args():
     parser.add_argument("--restore_model", type=str, default=None,
                         help="file in which model are loaded")
     ## NOTE: episode-wise or transition-wise (per transtion now, easier to log)
-    parser.add_argument("--log_interval", default=25000, type=int,
+    parser.add_argument("--log_interval", default=1000, type=int,
                         help="frequency to log exploration/runner stats")
-    parser.add_argument("--train_interval", default=0, type=int,
+    parser.add_argument("--train_interval", default=100, type=int,
                         help="number of steps collected before each train")
     # parser.add_argument("--steps_per_update", default=100, type=int,
     #                     help="number of env steps collected before 1 training update")
     parser.add_argument("--target_update_interval", default=0, type=int,
                         help="syncing parameters with target networks")
-    parser.add_argument("--train_log_interval", default=25000, type=int,
+    parser.add_argument("--train_log_interval", default=1000, type=int,
                         help="frequency to log training stats, e.g. losses")
-    parser.add_argument("--eval_interval", default=25000, type=int,
+    parser.add_argument("--eval_interval", default=1000, type=int,
                         help="number of steps collected before each evaluation")
-    parser.add_argument("--save_interval", default=500000, type=int)
+    parser.add_argument("--save_interval", default=100000, type=int)
     
     # misc 
     parser.add_argument("--cuda", default=False, action='store_true')
     parser.add_argument("--cluster", default=False, action='store_true', 
                         help='if running in cluster (allow more resources)')
     parser.add_argument("--overwrite", type=str, nargs='+',
-                        help="overwrite env config with format: nested_name nested_type value ...")
+                        help="overwrite env config with format: nested_name-nested_type-value ...")
     parser.add_argument("--use_tensorboard", default=False, action='store_true',
                         help="if to use tensorboard for logging")
     parser.add_argument("--show_visual_range", default=False, action='store_true', 
@@ -124,19 +124,18 @@ def parse_args():
 
     # model 
     parser.add_argument("--hidden_dim", default=64, type=int)
-    parser.add_argument("--critic", type=str, default="mlp",
-                        help="type of critic network", choices=["mlp", "rnn", "gnn"])
-    parser.add_argument("--actor", type=str, default="mlp",
-                        help="type of actor network", choices=["mlp", "rnn", "gnn"])
-
+    # NOTE: ensemble/pbt args
+    parser.add_argument("--ensemble_size", default=1, type=int, 
+                        help="policy ensemble size for each agent")
+    parser.add_argument("--ensemble_config", type=str, nargs='+',
+                        help="for ensemble/pbt, specify pool sizes for eacah agent type")
+    
     # evaluation 
     parser.add_argument("--no_eval", default=False, action='store_true',
                         help="do evaluation during training")
     parser.add_argument("--no_render", default=False, action='store_true', 
                         help='if to stop rendering in evaluation rollouts')
-    parser.add_argument("--eval_n_episodes", default=10, type=int)
-    parser.add_argument("--eval_batch_size", default=2, type=int,
-                        help="number of data points evaluated () per run")
+    parser.add_argument("--eval_n_episodes", default=20, type=int)
 
     # loggings 
     parser.add_argument("--log_agent_returns", default=False, action='store_true',
@@ -149,6 +148,7 @@ def parse_args():
 
     args = parser.parse_args()
     return args 
+
 
 
 #####################################################################################
@@ -181,57 +181,123 @@ def run(args):
                             config.n_rollout_threads, config.seed)
     if not config.no_eval:
         eval_env = make_parallel_env(p_env_func, config.env_config, 
-                                config.eval_batch_size, 1, config.seed)
+                                # config.sample_batch_size, 
+                                2, 1, config.seed)
 
     # NOTE: make learner agent 
     if is_restore or config.restore_model is not None:
-        learner = RMADDPG.init_from_save(config.restore_model)
-    else:
-        learner = RMADDPG.init_from_env(
+        learner = MADDPG.init_from_save(config.restore_model)
+    else:    
+        learner = MADDPG.init_from_env(
             env, 
             agent_alg=config.agent_alg,
             adversary_alg=config.adversary_alg,
             tau=config.tau,
             lr=config.lr,
             hidden_dim=config.hidden_dim,
-            rnn_policy=(config.actor == "rnn"),
-            rnn_critic=(config.critic == "rnn")
+            # ensemble/pbt args
+            ensemble_size=config.ensemble_size,
+            ensemble_config=config.ensemble_config
         )
 
     # NOTE: make sampling runner (env wrapper)  
     scheme = get_sample_scheme(learner.nagents, env.observation_space, env.action_space)
-    runner = EpisodeRunner(scheme, env, learner, logger, config.sample_batch_size,
-                            config.episode_length, device=config.device, t_env=t_env)
+    runner = StepRunner(scheme, env, learner, logger, config.sample_batch_size,
+                            config.episode_length, device=config.device, t_env=t_env,
+                            is_training=True)
     if not config.no_eval:
-        eval_runner = EpisodeRunner(scheme, eval_env, learner, logger, 
-                            config.eval_batch_size, config.episode_length, 
-                            device=config.device, t_env=t_env, 
+        eval_runner = StepRunner(scheme, eval_env, learner, logger, 
+                            # config.sample_batch_size,
+                            2, config.episode_length, device=config.device, t_env=t_env, 
                             is_training=False)
-    buffer = EpisodeReplayBuffer(scheme, config.max_buffer_size, 
-                        config.episode_length, device=config.device, prefill_num=2*config.batch_size)
-   
+
+    # NOTE: since in args, batch_size is episode-wise 
+    train_batch_size_steps = config.batch_size * config.episode_length
+    # buffer pool, one for each agent
+    buffer_pool = [
+        ReplayBuffer(
+            scheme, config.max_buffer_size * config.episode_length, 
+            device=config.device, prefill_num=2*train_batch_size_steps
+        ) for _ in range(len(learner.agent_pool))
+    ]
+    
     # NOTE: start training
     logger.info("Beginning training")
     start_time = time.time()
     last_time = start_time
-
+    
     ############################################
     # while t_env <= t_max:
     while episode <= config.n_episodes:
 
-        # NOTE: Run for a whole episode at a time
+        # NOTE: select/sample agents from pool to generate experience 
+        # do it before episode, so same agents persist throughout current episodes 
+        learner.sample_agents()
+
         learner.prep_rollouts(device=config.device)
         explr_pct_remaining = max(0, config.n_exploration_eps - episode) / config.n_exploration_eps
         learner.scale_noise(config.final_noise_scale + (config.init_noise_scale - config.final_noise_scale) * explr_pct_remaining)
         learner.reset_noise()
 
-        episode_batch, _ = runner.run()
-        buffer.insert_episode_batch(episode_batch)
-        # update counters 
-        episode += config.sample_batch_size
-        t_env = runner.t_env
-        estate.episode = episode
-        estate.t_env = t_env
+        # run an episode 
+        for t_ep in range(config.episode_length):
+
+            # NOTE: Run for one (parallel) step at a time
+            batch = runner.run()
+            # add to each ensemble buffer 
+            for a_i in range(learner.nagents):
+                buffer = buffer_pool[learner.agent_indices[a_i]]
+                buffer.insert_batch(switch_batch(batch, a_i))
+            # update counters 
+            t_env = runner.t_env
+            estate.t_env = t_env
+
+            ############################################
+            # NOTE: training updates
+            ## change to batch_size * n_updates_per_train for n_updates > 1
+            if (estate.last_train_t == 0) or (t_env - estate.last_train_t >= config.train_interval):
+                learner.prep_training(device=config.device)
+
+                for _ in range(config.n_updates_per_train):
+                    index = None 
+                    for a_i in range(learner.nagents):
+                        # sample from current agent buffer 
+                        buffer = buffer_pool[learner.agent_indices[a_i]]
+                        if not buffer.can_sample(train_batch_size_steps):
+                            continue 
+
+                        if config.sync_samples:
+                            # if not None, reuse episode_sample 
+                            if index is None:
+                                index = buffer.make_index(train_batch_size_steps)
+                        else:
+                            # each agent can have different collective experience samples
+                            index = buffer.make_index(train_batch_size_steps)
+                        sample = buffer.sample_index(index)
+
+                        if sample.device != config.device:
+                            sample.to(config.device)
+
+                        # dispatch sample to per agent [(B,D)]*N 
+                        sample = dispatch_samples(sample, scheme, learner.nagents)
+                        learner.update(sample, a_i)  #, logger=logger)
+
+                # sync target networks 
+                if t_env - estate.last_target_update_t >= config.target_update_interval:
+                    learner.update_all_targets()
+                    estate.last_target_update_t = t_env
+
+                learner.prep_rollouts(device=config.device)
+                estate.last_train_t = t_env
+
+                # collect & log trianing stats
+                if t_env - estate.last_train_log_t >= config.train_log_interval:
+                    train_results = learner.get_summaries()
+                    learner.reset_summaries()
+                    logger.info("\n")
+                    logger.info("*** training log ***")
+                    log_results(t_env, train_results, logger, mode="train")
+                    estate.last_train_log_t = t_env
 
         ############################################
         # NOTE: logging (exploration/sampling)
@@ -254,62 +320,24 @@ def run(args):
             estate.last_log_t = t_env
 
         ############################################
-        # NOTE: training updates
-        ## change to batch_size * n_updates_per_train for n_updates > 1
-        if buffer.can_sample(config.batch_size) and (t_env - estate.last_train_t >= config.train_interval):
-            learner.prep_training(device=config.device)
-
-            for _ in range(config.n_updates_per_train):
-                episode_sample = None 
-                for a_i in range(learner.nagents):
-
-                    if config.sync_samples:
-                        # if not None, reuse episode_sample 
-                        if episode_sample is None:
-                            episode_sample = buffer.sample(config.batch_size)
-                    else:   
-                        # each agent can have different collective experience samples
-                        episode_sample = buffer.sample(config.batch_size)
-
-                    # Truncate batch to only filled timesteps
-                    max_ep_t = episode_sample.max_t_filled()
-                    episode_sample = episode_sample[:, :max_ep_t]
-                    if episode_sample.device != config.device:
-                        episode_sample.to(config.device)
-
-                    # dispatch sample to per agent [(B,T,D)]*N 
-                    sample = dispatch_samples(episode_sample, scheme, learner.nagents)
-                    learner.update(sample, a_i)  #, logger=logger)
-
-            # sync target networks 
-            if t_env - estate.last_target_update_t >= config.target_update_interval:
-                learner.update_all_targets()
-                estate.last_target_update_t = t_env
-
-            learner.prep_rollouts(device=config.device)
-            estate.last_train_t = t_env
-
-            # collect & log trianing stats
-            if t_env - estate.last_train_log_t >= config.train_log_interval:
-                train_results = learner.get_summaries()
-                learner.reset_summaries()
-                logger.info("\n")
-                logger.info("*** training log ***")
-                log_results(t_env, train_results, logger, mode="train")
-                estate.last_train_log_t = t_env
-
-        ############################################
         # NOTE: Execute test runs once in a while
         if not config.no_eval and ((estate.last_test_t == 0) or (t_env - estate.last_test_t >= config.eval_interval)):
-            n_test_runs = max(1, config.eval_n_episodes // eval_runner.batch_size)
-            eval_episodes = []
+            n_test_runs = max(1, config.eval_n_episodes // runner.batch_size)
+
+            eval_episodes = [[] for _ in range(config.episode_length)]
             for _ in range(n_test_runs):
-                eval_bt, _ = eval_runner.run(render=(not config.no_render))
-                eval_episodes.append(eval_bt)
+                for et in range(config.episode_length):
+                    eval_bt = eval_runner.run(render=(not config.no_render))
+                    eval_episodes[et].append(eval_bt)
+
             # collect evaluation stats
             eval_results = eval_runner.get_summaries()
             eval_runner.reset_summaries()
-            eval_episodes = eval_episodes[0].concat(eval_episodes[1:])
+            # concat along batch dim -> list of concat' SampleBatch
+            eval_episodes = [e[0].concat(e[1:]) for e in eval_episodes]
+            # stack along time dim -> EpisodeBatch
+            eval_episodes = eval_episodes[0].time_stack(eval_episodes[1:])
+
             logger.info("\n")
             logger.info("*** evaluation log ***")
             log_results(t_env, eval_results, logger, mode="eval", episodes=eval_episodes, 
@@ -318,7 +346,7 @@ def run(args):
 
             # NOTE: debug noly, log network weights
             log_weights(learner, logger, t_env)
-               
+
         ############################################
         # NOTE: checkpoint 
         if (estate.last_save_t == 0) or (t_env - estate.last_save_t >= config.save_interval): 
@@ -332,7 +360,11 @@ def run(args):
             ))
             estate.last_save_t = t_env
             estate.save_state(config.save_dir + "/exp_state.pkl")
-    
+
+        # end of current episode 
+        episode += config.sample_batch_size
+        estate.episode = episode
+        
     ############################################
     # NOTE: clean up 
     learner.save(config.save_dir + "/model.ckpt")    # final save
@@ -343,9 +375,10 @@ def run(args):
     logger.export_scalars_to_json("summary.json")
     logger.info("Finished Training")
     logger.close()
-
+    
 
 
 if __name__ == '__main__':
     args = parse_args()
     run(args)
+

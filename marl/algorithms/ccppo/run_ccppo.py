@@ -145,6 +145,8 @@ def parse_args():
     parser.add_argument("--no_render", default=False, action='store_true', 
                         help='if to stop rendering in evaluation rollouts')
     parser.add_argument("--eval_n_episodes", default=10, type=int)
+    parser.add_argument("--eval_batch_size", default=2, type=int,
+                        help="number of data points evaluated () per run")
 
     # loggings 
     parser.add_argument("--log_agent_returns", default=False, action='store_true',
@@ -189,8 +191,7 @@ def run(args):
                             config.n_rollout_threads, config.seed)
     if not config.no_eval:
         eval_env = make_parallel_env(p_env_func, config.env_config, 
-                                # config.sample_batch_size, 
-                                2, 1, config.seed)
+                                config.eval_batch_size, 1, config.seed)
 
     # NOTE: make learner agent 
     if is_restore or config.restore_model is not None:
@@ -223,8 +224,8 @@ def run(args):
                             ma_step_keys=["logits"], is_training=True)
     if not config.no_eval:
         eval_runner = CTDERunner(scheme, eval_env, learner, logger, 
-                            # config.sample_batch_size,
-                            2, config.episode_length, device=config.device, t_env=t_env, 
+                            config.eval_batch_size, config.episode_length, 
+                            device=config.device, t_env=t_env, 
                             ma_step_keys=["logits"], is_training=False)
     
     # NOTE: start training

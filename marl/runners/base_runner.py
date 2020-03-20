@@ -44,7 +44,7 @@ class BaseRunner(object):
             [ [(D,)]*N ]*B -> [(B,D)]*N
             [ [dict (D,)]*N ]*B -> [dict (B,D)]*N
         """
-        def collate_fn(x):
+        def collate_fn(x, to_torch=True):
             if not to_torch:
                 return np.array(x)
             else:
@@ -53,13 +53,13 @@ class BaseRunner(object):
         if isinstance(obs, np.ndarray):
             # obs same shape across agents, obs stacked 
             torch_obs = [
-                collate_fn(obs[:, i]) for i in range(self.mac.nagents)
+                collate_fn(obs[:, i], to_torch=to_torch) for i in range(self.mac.nagents)
             ]   # (B,N,D) -> [(B,D)]*N
 
         elif all([isinstance(ob, (list, tuple)) for ob in obs]):
             # each sample obs is np array (different size across agents)
             torch_obs = [
-                collate_fn(a_obs) for a_obs in zip(*obs)
+                collate_fn(a_obs, to_torch=to_torch) for a_obs in zip(*obs)
             ]  # [ [(D,)]*B ]*N -> [(B,D)]*N
 
         elif all([isinstance(ob, dict) for ob in obs]):
@@ -73,7 +73,7 @@ class BaseRunner(object):
             # concat subfield arrays 
             torch_obs = [
                 {
-                    k: collate_fn(obs_list)
+                    k: collate_fn(obs_list, to_torch=to_torch)
                     for k, obs_list in a_dict.items()
                 } for a_dict in torch_obs
             ]   # [ [dict (D,)]*N ]*B -> [dict (B,D)]*N
@@ -118,7 +118,7 @@ class BaseRunner(object):
         if isinstance(obs, dict) and isinstance(next_obs, dict):
             # [dict (B,D)]*N
             dp_obs = self.dispatch_observations(obs, to_torch=False) 
-            dp_next_obs = self.dispatch_observations(obs, to_torch=False)
+            dp_next_obs = self.dispatch_observations(next_obs, to_torch=False)
 
             for i in range(self.mac.nagents):
                 for k, obs_k in obs.items():
@@ -130,7 +130,7 @@ class BaseRunner(object):
         elif isinstance(obs, (list, tuple)) and isinstance(next_obs, (list, tuple)):
             # [(B,D)]*N
             dp_obs = self.dispatch_observations(obs, to_torch=False) 
-            dp_next_obs = self.dispatch_observations(obs, to_torch=False)
+            dp_next_obs = self.dispatch_observations(next_obs, to_torch=False)
 
             for i in range(self.mac.nagents):
                 transition["obs/{}".format(i)] = dp_obs[i]  # (B,D)

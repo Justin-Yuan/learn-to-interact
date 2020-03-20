@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from gym.spaces import Box, Discrete
 from utils.networks import MLPNetwork
 from utils.misc import soft_update, average_gradients, compute_advantages, explained_variance_torch
-from utils.agents import PPOAgent
+from utils.agents import DEFAULT_ACTION, PPOAgent
 
 
 
@@ -302,6 +302,24 @@ class CCPPO(object):
         else:
             return _flatten(acs, keys)
 
+    def wrap_action(self, acs, ma=False):
+        """ wrap np array action (single act output) into dict 
+            to be consistent with policy net output format 
+        Arguments:
+            acs: (B,T,A), or dict of (B,T,A), or list []*N of it 
+        Returns:
+            out: dict of (B,T,A), or list []*N of it
+        """
+        def _wrap(x):
+            if not isinstance(x, dict):
+                return {DEFAULT_ACTION: x}
+            return x 
+        
+        if ma:
+            return [_wrap(ac) for ac in acs]
+        else:
+            return _wrap(acs)
+        
     def update(self, sample, agent_i, parallel=False, grad_norm=0.5, contract_keys=None):
         """ Update parameters of agent model based on sample from replay buffer
         Arguments:
@@ -348,8 +366,11 @@ class CCPPO(object):
         curr_agent.policy_optimizer.zero_grad()
         
         # ppo policy update 
+        # NOTE: need wrap coz `evaluation_action` takes in dict, since policy output dict)
         act_eval_out = curr_agent.evalaute_action(
-            old_logits[agent_i], acs[agent_i], obs[agent_i], 
+            self.wrap_action(old_logits[agent_i]), 
+            self.wrap_action(acs[agent_i]), 
+            obs[agent_i], 
             contract_keys=contract_keys
         ) # all (B,T,1)
         curr_log_prob, old_log_prob, entropy, kl = act_eval_out

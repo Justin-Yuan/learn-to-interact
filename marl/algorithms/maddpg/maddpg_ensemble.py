@@ -5,23 +5,21 @@ import torch.nn.functional as F
 from gym.spaces import Box, Discrete
 
 from utils.misc import soft_update, average_gradients, onehot_from_logits, gumbel_softmax
-from agents import DEFAULT_ACTION, DDPGAgent, DDPGAgentMOA
+from agents import DEFAULT_ACTION, DDPGAgent
 from algorithms.maddpg.utils import switch_list
-
 
 
 MSELoss = torch.nn.MSELoss()
 
-class MADDPG(object):
+class MADDPGEnsemble(object):
     """
     Wrapper class for DDPG-esque (i.e. also MADDPG) agents in multi-agent task
     """
-    def __init__(self, agent_init_params, alg_types,
-                 gamma=0.95, tau=0.01, lr=0.01, hidden_dim=64,
-                #  discrete_action=False
-                model_of_agents=False, moa_entropy_coeff=0.1, 
-                **kwargs
-        ):
+    def __init__(self, agent_init_params=None, alg_types=None,
+        gamma=0.95, tau=0.01, lr=0.01, hidden_dim=64,
+        #  discrete_action=False
+        agent_map=None, **kwargs
+    ):
         """
         Inputs:
             agent_init_params (list of dict): List of dicts with parameters to
@@ -40,18 +38,15 @@ class MADDPG(object):
         self.nagents = len(alg_types)
         self.alg_types = alg_types
         self.agent_init_params = agent_init_params
-        self.model_of_agents = model_of_agents
-        if not model_of_agents:
-            self.agents = [
-                DDPGAgent(lr=lr, hidden_dim=hidden_dim, **params)
-                for params in agent_init_params]
-        else:
-            self.agents = [
-                DDPGAgentMOA(model_of_agents=True, lr=lr, hidden_dim=hidden_dim, **params)
-                for params in agent_init_params]
-            self.moa_entropy_coeff = moa_entropy_coeff
-            self.moa_pol_dev = "cpu"
-            self.moa_trgt_pol_dev = "cpu"
+        self.agent_pool = [
+            DDPGAgent(lr=lr, hidden_dim=hidden_dim, **params)
+            for params in agent_init_params    
+        ]            
+        # map from active agent to available agent pool
+        self.agent_map = agent_map
+        # active agents, either for sampling or training 
+        self.agent_indices = [-1] * self.nagents
+        self.agents = [None] * self.nagents
 
         self.gamma = gamma
         self.tau = tau
@@ -64,20 +59,30 @@ class MADDPG(object):
         self.niter = 0
         # summaries tracker 
         self.agent_losses = defaultdict(list)
-
+       
     def get_summaries(self):
         return {"agent_losses": deepcopy(self.agent_losses)}
 
     def reset_summaries(self):
         self.agent_losses.clear()
 
-    @property
-    def policies(self):
-        return [a.policy for a in self.agents]
+    def sample_agents(self):
+        """ sample agents to be used from agent_pool """
+        sampled_idx = []
+        for i in range(self.nagents):
+            idx = int(np.random.choice(self.agent_map[i], 1)[0])
+            sampled_idx.append(idx)
+            self.agent_indices[i] = idx 
+            self.agents[i] = self.agent_pool[idx]
+        return sampled_idx
 
-    @property
-    def target_policies(self):
-        return [a.target_policy for a in self.agents]
+    # @property
+    # def policies(self):
+    #     return [a.policy for a in self.agents]
+
+    # @property
+    # def target_policies(self):
+    #     return [a.target_policy for a in self.agents]
 
     def scale_noise(self, scale):
         """
@@ -117,21 +122,6 @@ class MADDPG(object):
                 a.target_critic = a.target_critic.to(device)
             self.trgt_critic_dev = device
 
-        # moa stuff 
-        if self.model_of_agents:
-            for a in self.agents:
-                for j in a.moa_policies:
-                    a.moa_policies[j].train()
-                    a.moa_target_policies[j].train()
-
-            if (not self.moa_pol_dev == device) or (not self.moa_trgt_pol_dev == device):
-                for a in self.agents:
-                    for j in a.moa_policies:
-                        a.moa_policies[j] = a.moa_policies[j].to(device)
-                        a.moa_target_policies[j] = a.moa_target_policies[j].to(device)
-                self.moa_pol_dev = device 
-                self.moa_trgt_pol_dev = device 
-
     def prep_rollouts(self, device='cpu', batch_size=None):
         """ switch nn models to eval mode """
         for a in self.agents:
@@ -149,44 +139,83 @@ class MADDPG(object):
         Save trained parameters of all agents into one file
         """
         self.prep_training(device='cpu')  # move parameters to CPU before saving
-        save_dict = {'init_dict': self.init_dict,
-                     'agent_params': [a.get_params() for a in self.agents]}
+        save_dict = {
+            'init_dict': self.init_dict,
+            'agent_params': [a.get_params() for a in self.agent_pool] #self.agents]
+        }
         torch.save(save_dict, filename)
 
     @classmethod
-    def init_from_env(cls, env, agent_alg="MADDPG", adversary_alg="MADDPG",
-                      gamma=0.95, tau=0.01, lr=0.01, hidden_dim=64, **kwargs):
+    def init_from_env(
+        cls, env, agent_alg="MADDPG", adversary_alg="MADDPG",
+        gamma=0.95, tau=0.01, lr=0.01, hidden_dim=64, 
+        ensemble_size=1, ensemble_config=None,
+        **kwargs
+    ):
         """
         Instantiate instance of this class from multi-agent environment
+        ensemble_config: "<agent_type>-<population size> <agent_type>-<population size> ..."
         """
-        agent_init_params = []
-        alg_types = [adversary_alg if atype == 'adversary' else agent_alg for
-                     atype in env.agent_types]
+        # prep agent pool info
+        agent_list, agent_map = [], {}
+        if ensemble_config is not None:
+            # specifies pool size for each agent type 
+            idx, temp = 0, {}
+            for entry in ensemble_config.strip().split(" "):
+                agent_type, agent_size = entry.split("-")
+                agent_list += [agent_type] * agent_size
+                # cache agent type to agent indices
+                temp[agent_type] = list(range(idx, idx+agent_size))
+                idx += agent_size 
+            # create map from active agent idx to agent indices
+            for i, agent_type in enumerate(env.agent_types):
+                agent_map[i] = temp[agent_type]
+        else:
+            # specifies ensemble size for each active agent 
+            for i, agent_type in enumerate(env.agent_types):
+                agent_list += [agent_type] * ensemble_size
+                agent_map[i] = list(range(i*ensemble_size, (i+1)*ensemble_size))
+        
+        obs_space_dict, act_space_dict = {}, {}
+        for a_type in list(set(env.agent_types)):
+            # record agent type to obs space
+            obs_idx = env.observation_space.index(a_type)
+            obs_space_dict[a_type] = env.observation_space[obs_idx]
+            # record agent type to act space
+            act_idx = env.action_space.index(a_type)
+            act_space_dict[a_type] = env.action_space[act_idx]
 
-        for i, (algtype, acsp, obsp) in enumerate(
-            zip(alg_types, env.action_space, env.observation_space)
-        ):           
+
+        # make init params for pool of agents
+        agent_init_params = [] 
+        alg_types = [adversary_alg if atype == 'adversary' else agent_alg for
+                     atype in agent_list] #env.agent_types]
+        obs_spaces = [obs_space_dict[a_type] for atype in agent_list]
+        act_spaces = [act_space_dict[a_type] for atype in agent_list]
+
+        for atype, algtype, acsp, obsp in zip(agent_list, alg_types, act_spaces, obs_spaces):           
             # used in initializing agent (including policy and critic)
+            obs_idx = env.observation_space.index(a_type)
+            act_idx = env.action_space.index(a_type)
+
             agent_init_params.append({
                 'algo_type': algtype,
                 'act_space': acsp,
                 'obs_space': obsp,
-                # 'env_obs_space': env.observation_space,
-                # 'env_act_space': env.action_space
-                'env_obs_space': switch_list(env.observation_space, i),
-                'env_act_space': switch_list(env.action_space, i)
+                'env_obs_space': switch_list(env.observation_space, obs_idx),
+                'env_act_space': switch_list(env.action_space, act_idx)
             })
-        # also put agent init dicts to maddpg init_dict
+
+        # make learaner 
         init_dict = {
             'gamma': gamma, 'tau': tau, 'lr': lr,
             'hidden_dim': hidden_dim,
             'alg_types': alg_types,
             'agent_init_params': agent_init_params,
+            "agent_map": agent_map
             # 'discrete_action': discrete_action,
         }
-        # algo specific configs
         init_dict.update(kwargs)
-
         instance = cls(**init_dict)
         instance.init_dict = init_dict
         return instance
@@ -212,14 +241,6 @@ class MADDPG(object):
         Returnss:
             actions: List of action (np array or dict of it) for each agent
         """
-        # actions = []
-        # for a, obs in zip(self.agents, observations):
-        #     action = a.step(obs, explore=explore)  # dict (B,A)
-        #     if DEFAULT_ACTION in action:
-        #         actions.append(action[DEFAULT_ACTION])
-        #     else:
-        #         actions.append(action)
-        # return actions
         return [
             a.step(obs, explore=explore) 
             for a, obs in zip(self.agents, observations)
@@ -314,76 +335,66 @@ class MADDPG(object):
         dones = [done.unsqueeze(1) for done in dones]
         return obs, acs, rews, next_obs, dones 
 
-    def normalize_rewards(self, rews):
-        """ performa normalization on per-agent rewards 
-            - rews: [(B,1)]*N
-        """
-        return [(rew - rew.mean()) / rew.std() for rew in rews]
-
-    def update(self, sample, agent_i, parallel=False, grad_norm=0.5, norm_rewards=False):
+    def update(self, sample, agent_i, parallel=False, grad_norm=0.5):
         """ Update parameters of agent model based on sample from replay buffer
         Arguments:
             sample: [(B,D)]*N, obs, next_obs, action can be [dict (B,D)]*N
+            NOTE: each's first element belong to agent_i
             agent_i (int): index of agent to update
             parallel (bool): If true, will average gradients across threads
         """
         # [(B,1,D)]*N or [dict (B,1,D)]*N
         obs, acs, rews, next_obs, dones = self.add_virtual_dim(sample)   
-        # preprocess rewards to reduce variance 
-        if norm_rewards:
-            rews = selef.normalize_rewards(rews)
-
-        bs, ts, _ = obs[agent_i].shape 
+        bs, ts, _ = obs[0].shape 
+        # index into agent pool from active agent index
+        curr_alg_type = self.alg_types[self.agent_indices[agent_i]]
         curr_agent = self.agents[agent_i]
+        # since current agent is first in active agent list 
+        curr_obs = obs[0]
+        curr_ac = acs[0]
+        curr_rew = rews[0]
+        curr_nobs = next_obs[0]
+        curr_done = dones[0]
+        curr_agents = switch_list(self.agents, agent_i)
 
         # NOTE: Critic update
         curr_agent.critic_optimizer.zero_grad()
 
         # compute target actions
-        if self.alg_types[agent_i] == 'MADDPG':
-            all_trgt_acs = []   # [dict (B,1,A)]*N
-            for i, nobs in enumerate(next_obs): # (B,1,O)
+        with torch.no_grad():
+            if curr_alg_type == 'MADDPG':
+                all_trgt_acs = []   # [dict (B,1,A)]*N
+                for i, nobs in enumerate(next_obs): # (B,1,O)
+                    act_i = curr_agents[i].compute_action(nobs, target=True, requires_grad=False)
+                    all_trgt_acs.append(act_i)
+                # [(B,1,O)_i, ..., (B,1,A)_i, ...] -> (B,1,O*N+A*N)
+                trgt_vf_in = torch.cat([
+                    *self.flatten_obs(next_obs, ma=True), 
+                    *self.flatten_act(all_trgt_acs, ma=True)
+                ], dim=-1)
+            else:  # DDPG
+                act_i = curr_agent.compute_action(curr_nobs, target=True, requires_grad=False)
+                # (B,1,O) + (B,1,A) -> (B,1,O+A)
+                trgt_vf_in = torch.cat([
+                    self.flatten_obs(curr_nobs), 
+                    self.flatten_act(act_i)
+                ], dim=-1)
 
-                if self.model_of_agents:
-                    if i == agent_i:    # use current agent target
-                        act_i = curr_agent.compute_action(
-                            nobs, target=True, requires_grad=False)
-                    else:   # use moa agent target 
-                        act_i = curr_agent.compute_moa_action(
-                            i, nobs, target=True, requires_grad=False, return_logits=True)
-                else:   # use each agents' target directly
-                    act_i = self.agents[i].compute_action(
-                        nobs, target=True, requires_grad=False)
-
-                all_trgt_acs.append(act_i)
-            # [(B,1,O)_i, ..., (B,1,A)_i, ...] -> (B,1,O*N+A*N)
-            trgt_vf_in = torch.cat([
-                *self.flatten_obs(next_obs, ma=True), 
-                *self.flatten_act(all_trgt_acs, ma=True)
-            ], dim=-1)
-        else:  # DDPG
-            act_i = curr_agent.compute_action(next_obs[agent_i], target=True, requires_grad=False)
-            # (B,1,O) + (B,1,A) -> (B,1,O+A)
-            trgt_vf_in = torch.cat([
-                self.flatten_obs(next_obs[agent_i]), 
-                self.flatten_act(act_i)
-            ], dim=-1)
-
-        # bellman targets   # (B*T,1) -> (B*1,1) -> (B,1)
-        target_q = curr_agent.compute_value(trgt_vf_in, target=True) 
-        target_value = (rews[agent_i].view(-1, 1) + self.gamma * target_q *
-                            (1 - dones[agent_i].view(-1, 1)))   
+            # bellman targets   # (B*T,1) -> (B*1,1) -> (B,1)
+            target_q = curr_agent.compute_value(trgt_vf_in, target=True) 
+            target_value = (curr_rew.view(-1, 1) + self.gamma * target_q *
+                                (1 - curr_done.view(-1, 1)))   
 
         # Q func
-        if self.alg_types[agent_i] == 'MADDPG':
+        if curr_alg_type == 'MADDPG':
             vf_in = torch.cat([
                 *self.flatten_obs(obs, ma=True), 
                 *self.flatten_act(acs, ma=True)
             ], dim=-1)
         else:  # DDPG
             vf_in = torch.cat([
-                self.flatten_obs(obs[agent_i]),
-                self.flatten_act(acs[agent_i])
+                self.flatten_obs(curr_obs),
+                self.flatten_act(curr_ac)
             ], dim=-1)
         actual_value = curr_agent.compute_value(vf_in, target=False) # (B*T,1)
 
@@ -400,16 +411,16 @@ class MADDPG(object):
         curr_agent.policy_optimizer.zero_grad()
 
         # current agent action (deterministic, softened), dcit (B,T,A)
-        curr_pol_out = curr_agent.compute_action(obs[agent_i], target=False, requires_grad=True) 
+        curr_pol_out = curr_agent.compute_action(curr_obs, target=False, requires_grad=True) 
 
-        if self.alg_types[agent_i] == 'MADDPG':
+        if curr_alg_type == 'MADDPG':
             all_pol_acs = []
-            for i, pi, ob in zip(range(self.nagents), self.policies, obs):
-                if i == agent_i:    # insert current agent act to q input 
+            for i, ob in zip(range(self.nagents), obs):
+                if i == 0:    # insert current agent act to q input 
                     all_pol_acs.append(self.flatten_act(curr_pol_out))
                     # all_pol_acs.append(curr_pol_out)
                 else: 
-                    # p_act_i = self.agents[i].compute_action(ob, target=False, requires_grad=False) 
+                    # p_act_i = curr_agents[i].compute_action(ob, target=False, requires_grad=False) 
                     p_act_i = self.flatten_act(acs[i])
                     all_pol_acs.append(p_act_i)
             # (B,T,O*N+A*N)s
@@ -420,7 +431,7 @@ class MADDPG(object):
         else:  # DDPG
             # (B,T,O+A)
             p_vf_in = torch.cat([
-                self.flatten_obs(obs[agent_i]),
+                self.flatten_obs(curr_obs),
                 self.flatten_act(curr_pol_out)
             ], dim=-1) 
         
@@ -453,84 +464,6 @@ class MADDPG(object):
             results[key] = value
             self.agent_losses[key].append(value)        
         return results
-    
-    #####################################################################################
-    ### MOA stuff 
-    ####################################################################################
-
-    def wrap_action(self, acs, ma=False):
-        """ wrap np array action (single act output) into dict 
-            to be consistent with policy net output format 
-        Arguments:
-            acs: (B,T,A), or dict of (B,T,A), or list []*N of it 
-        Returns:
-            out: dict of (B,T,A), or list []*N of it
-        """
-        def _wrap(x):
-            if not isinstance(x, dict):
-                return {DEFAULT_ACTION: x}
-            return x 
-        
-        if ma:
-            return [_wrap(ac) for ac in acs]
-        else:
-            return _wrap(acs)
-
-    def update_moa(self, sample, agent_i, parallel=False, grad_norm=0.5):
-        """ Update parameters of moa networks based on lastest sample from replay buffer
-        Arguments:
-            sample: [(B,D)]*N, obs, next_obs, action can be [dict (B,D)]*N
-            agent_i (int): index of agent to update
-            parallel (bool): If true, will average gradients across threads
-        """
-        # [(B,1,D)]*N or [dict (B,1,D)]*N
-        interm_sample = self.add_virtual_dim(sample)   
-        # place current agent subsample to first in sample batch
-        obs, acs, rews, next_obs, dones = [
-            switch_list(s, agent_i) for s in interm_sample
-        ]
-        bs, ts, _ = obs[0].shape 
-        curr_agent = self.agents[agent_i]
-        curr_agent.init_moa_hidden(bs)  # use pre-defined init hiddens 
-        results = {}
-
-        # perform update on each moa agent 
-        for agent_j in range(1, len(self.nagents)):
-            # current agent's j-th moa 
-            pi_j = curr_agent.moa_policies[agent_j]
-            curr_agent.moa_optimizers[agent_j].zero_grad()
-
-            log_prob_j, entropy_j = curr_agent.evaluate_moa_action(
-                agent_j, self.wrap_action(acs[agent_j]), obs[agent_j]
-            )   # (B,T,1)
-            log_prob_loss = -log_prob_j.reshape(bs*ts, -1).mean()
-            entropy_loss = -entropy_j.reshape(bs*ts, -1).mean()
-            
-            moa_loss_j = log_prob_loss + self.moa_entropy_coeff * entropy_loss 
-            moa_loss_j.backward()
-            if parallel:
-                average_gradients(pi_j)
-            if grad_norm > 0:
-                torch.nn.utils.clip_grad_norm(pi_j.parameters(), grad_norm)
-            curr_agent.moa_optimizers[agent_j].step()
-
-            # loggings (might be overwhelming)
-            for k, v in zip(
-                ["log_prob_loss", "entropy_loss"], 
-                [log_prob_loss, entropy_loss]
-            ):
-                key = "agent_{}/moa_{}/{}".format(agent_i, agent_j, k)
-                value = v.data.cpu().numpy()
-                results[key] = value
-                self.agent_losses[key].append(value)
-
-        return results  
-
-
-        
-
-
-
 
 
 

@@ -39,7 +39,7 @@ class SACAgent(object):
     """
     def __init__(self, algo_type="MASAC", act_space=None, obs_space=None, 
                 rnn_policy=False, rnn_critic=False, hidden_dim=64, lr=0.01, 
-                env_obs_space=None, env_act_space=None):
+                env_obs_space=None, env_act_space=None, **kwargs):
         """
         Inputs:
             act_space: single agent action space (single space or Dict)

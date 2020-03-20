@@ -144,7 +144,7 @@ def log_results(t_env, results, logger, mode="sample", episodes=None,
             # logger.add_video("{}/frames".format(mode), vid_tensor, t_env)
             # save to local 
             stacked_frames = frames.data.cpu().numpy().astype(np.uint8).reshape(-1,h,w,c)
-            logger.log_video("{}_video.gif".format(mode), stacked_frames)
+            logger.log_video("videos/{}_video_{}.gif".format(mode, t_env), stacked_frames)
 
         log_str = "t_env: {} | mean returns: {:.2f}".format(t_env, np.mean(returns))
         # temp = ", ".join(["agent_{}: {:.2f}".format(k, np.mean(v)) for k, v in sorted(agent_returns.items())])

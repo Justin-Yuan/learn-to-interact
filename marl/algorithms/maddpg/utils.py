@@ -2,12 +2,16 @@ import os
 import time
 import random 
 import numpy as np
+from copy import deepcopy 
+from functools import partial 
 from gym.spaces import Box, Discrete, Dict
 from collections import OrderedDict, defaultdict
 import torch
 
 # local
 from runners.env_wrappers import SubprocVecEnv, DummyVecEnv
+from agents import AGENTS_MAP 
+from runners.sample_batch import SampleBatch, EpisodeBatch
 
 #####################################################################################
 ### funcs
@@ -57,7 +61,7 @@ def dispatch_samples(sample, scheme, n_agents, fields=None):
         obs, acs, rews, next_obs, dones: each is [(B,D)]*N
         obs, next_obs, action can be [dict (B,D)]*N
     """
-    def filter_key(key):
+    def filter_key(key, scheme):
         if ("obs" in key) and (not "next_obs" in key):  # for obs
             return [k for k in scheme if key in k and not "next_obs" in k]
         else:
@@ -71,7 +75,7 @@ def dispatch_samples(sample, scheme, n_agents, fields=None):
     # import pdb; pdb.set_trace()
     for f_i, f in enumerate(fields):
         for i in range(n_agents):
-            matched_keys = filter_key("{}/{}".format(f, i))
+            matched_keys = filter_key("{}/{}".format(f, i), scheme)
             if len(matched_keys) > 1:   # dict for sub_fields
                 field = {
                     key.split("/")[-1]: sample[key]
@@ -91,9 +95,9 @@ def make_parallel_env(env_func, env_config, batch_size, n_rollout_threads, seed)
             # do not set seed i if -1 (e.g. for evaluation)
             if seed >= 0:
                 # env.seed(seed + rank * 1000)
-                random.seed(seed + rank * 1000)
+                # random.seed(seed + rank * 1000)
                 np.random.seed(seed + rank * 1000)
-                torch.manual_seed(seed + rank * 1000)
+                # torch.manual_seed(seed + rank * 1000)
                 # mpe has its own seeding 
                 env = env_func(seed=seed + rank * 1000, **env_config)
             else:
@@ -129,7 +133,7 @@ def log_results(t_env, results, logger, mode="sample", episodes=None,
         logger.add_scalar("{}/returns_mean".format(mode), np.mean(returns), t_env)
         logger.add_scalar("{}/returns_std".format(mode), np.std(returns), t_env)
         if log_agent_returns:
-            for k, a_returns in agent_returns:
+            for k, a_returns in agent_returns.items():
                 logger.add_scalar("{}/{}_returns_mean".format(mode, k), np.mean(a_returns), t_env)
                 logger.add_scalar("{}/{}_returns_std".format(mode, k), np.std(a_returns), t_env)
 
@@ -142,9 +146,9 @@ def log_results(t_env, results, logger, mode="sample", episodes=None,
             # # tb accepts (N,T,C,H,W)
             # vid_tensor = frames.permute(0,1,4,2,3) * 255
             # logger.add_video("{}/frames".format(mode), vid_tensor, t_env)
-            # save to local 
+            # save to local  
             stacked_frames = frames.data.cpu().numpy().astype(np.uint8).reshape(-1,h,w,c)
-            logger.log_video("{}_video.gif".format(mode), stacked_frames)
+            logger.log_video("videos/{}_video_{}.gif".format(mode, t_env), stacked_frames)
 
         log_str = "t_env: {} | mean returns: {}".format(t_env, np.mean(returns))
         # temp = ", ".join(["{}: {}".format(k, np.mean(v)) for k, v in sorted(agent_returns.items())])
@@ -193,3 +197,69 @@ def log_weights(learner, logger, t_env):
             "critic_{}_{}".format(i, k): v for k, v in agent.critic.named_parameters()}
         logger.add_histogram_dict(agent_actor_params, t_env)
         logger.add_histogram_dict(agent_critic_params, t_env)
+
+
+#####################################################################################
+### ensemble/population based methods 
+#####################################################################################
+
+def switch_list(a, i):
+    """ put a[i] in the front of a
+    reference: https://www.dropbox.com/s/jlc6dtxo580lpl2/maddpg_ensemble_and_approx_code.zip?dl=0
+    """
+    return [a[i]] + a[:i] + a[i+1:]
+
+
+def switch_batch(b, i):
+    """ NOTE: DIRTY HACK !!! 
+    move fields for agent i in batch to first
+    Arguments:
+        - b: SampleBatch or EpisodeBatch 
+        - i: agent index in learner (for active agents)
+    Returns:
+        - out: permuted/switched SampleBatch or EpisodeBatch  
+    """
+    def filter_key(prefix, data_dict):
+        return [k for k in data_dict if k.startswith(prefix)]
+
+    # base case, already first 
+    if i == 0:
+        return b
+
+    # fields to be shifted for agent i
+    fields = ["obs", "action", "reward", "next_obs", "done"]
+    out_data = deepcopy(b.data)
+
+    if isinstance(batch, SampleBatch):
+        target = out_data
+        batch_func = partial(SampleBatch, b.scheme, b.batch_size, device=b.device)
+    elif isinstance(batch, EpisodeBatch):
+        target = out_data.transition_data
+        batch_func = partial(EpisodeBatch, b.scheme, b.batch_size, b.max_seq_length, device=b.device)
+    else:
+        raise Exception("Error! Batch format not recognized...")
+    
+    # shift for each field
+    for f in fields:
+        # cache fields for agent i before overwriting
+        i_keys = filter_key("{}/{}".format(f,i), target)
+        i_data = [deepcopy(target[k]) for k in i_keys]
+        # shift all fields from agent 0~i-1 to 1~i
+        for idx in range(i-1,-1,-1):
+            old_keys = filter_key("{}/{}".format(f,idx), target)
+            for key in old_keys:
+                new_key = key.replace("{}/{}".format(f,idx), "{}/{}".format(f,idx+1))
+                target[new_key] = target[key]
+        # place fileds from agent i to 0            
+        for i_key, i_d in zip(i_keys, i_data):
+            new_i_key = i_key.replace("{}/{}".format(f,i), "{}/{}".format(f,0))
+            target[new_i_key] = i_d
+
+    # make shifted batch 
+    out = batch_func(data=out_data)
+    return out 
+
+    
+    
+    
+

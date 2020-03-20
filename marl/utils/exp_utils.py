@@ -208,6 +208,8 @@ def setup_experiment(args):
 
     # set device 
     use_cuda = config.cuda and torch.cuda.is_available()
+    if not use_cuda:
+        torch.set_num_threads(config.n_training_threads)
     config.device = "cuda" if use_cuda else "cpu"
     # config.device = torch.device("cuda" if use_cuda else "cpu")
 
@@ -262,6 +264,8 @@ def restore_experiment(args):
     
     # set device 
     use_cuda = config.cuda and torch.cuda.is_available()
+    if not use_cuda:
+        torch.set_num_threads(config.n_training_threads)
     config.device = "cuda" if use_cuda else "cpu"
     # config.device = torch.device("cuda" if use_cuda else "cpu")
 
@@ -478,9 +482,16 @@ class ExperimentLogger(object):
         """ videos: (T,H,W,C) """
         self.tensorboard_writer.add_video(name, video_tensor, iter, fps=4)
 
-    def log_video(self, name, video):
-        """ video: rgb arrays """
-        imageio.mimsave('{}/{}'.format(self.log_dir, name), video)
+    def log_video(self, name, video, fps=20):
+        """ video: rgb arrays 
+        reference: https://imageio.readthedocs.io/en/stable/format_gif-pil.html
+        """
+        vid_kargs = {
+            'fps': fps   # duration per frame
+        }   
+        vid_name = '{}/{}'.format(self.log_dir, name)
+        mkdirs(os.path.dirname(vid_name))   # often is "videos/"
+        imageio.mimsave(vid_name, video, **vid_kargs)
 
     def log_epoch(self, epoch, state, epoch_stats):
         assert 'epoch' in state

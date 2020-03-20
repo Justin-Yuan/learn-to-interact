@@ -13,13 +13,13 @@ import torch
 from torch.autograd import Variable
 
 from runners.make_env import ENV_MAP
-from algorithms.rmaddpg import RMADDPG
 from runners.sample_batch import EpisodeBatch
 from runners.episode_runner import EpisodeRunner
 from utils.exp_utils import setup_evaluation, ExperimentLogger 
 from utils.exp_utils import time_left, time_str, merge_dict
 
-from algorithms.rmaddpg.utils import get_sample_scheme, make_parallel_env, log_results
+from algorithms.maddpg import MADDPG
+from algorithms.maddpg.utils import get_sample_scheme, make_parallel_env, log_results
 
 
 #####################################################################################
@@ -36,7 +36,7 @@ def parse_args():
                         help="sub folders for experiment (hierarchical), e.g. sub=a b c --> local-dir/a/b/c")
     parser.add_argument("--tag", type=str, nargs='+',
                         help="additional info for experiment, i.e. hyperparameters")
-    parser.add_argument("--seed", default=0, type=int,
+    parser.add_argument("--seed", default=1, type=int,
                         help="Random seed, if negative do not set seed")
     parser.add_argument("--cuda", default=False, action='store_true')
 
@@ -49,12 +49,12 @@ def parse_args():
                         help="Load incremental policy from given episode (alternative to restore_model)")
     parser.add_argument("--copy_checkpoint", default=False, action="store_true",
                         help="if to copy the evaluated checkpoint to current eval directory")
-    parser.add_argument("--n_episodes", default=8, type=int)
+    parser.add_argument("--n_episodes", default=10, type=int)
     parser.add_argument("--eval_batch_size", default=2, type=int,
                         help="number of data points evaluated () per run")
     parser.add_argument("--save_gifs", default=False, action="store_true",
                         help="Saves gif of each episode into model directory")
-    parser.add_argument("--save_gifs_num", default=-1, type=int,
+    parser.add_argument("--save_gifs_num", default=0, type=int,
                         help="number of episode gifs to save")
     parser.add_argument("--fps", default=30, type=int, 
                         help="frame per second of generated gif")
@@ -119,7 +119,7 @@ def maddpg_rollout_runner(config, learner, runner, n_episodes=10, episode_length
 
         ifi = 1 / fps  # inter-frame interval
         if save_gifs:
-            if save_gifs_num < 0:
+            if save_gifs_num <= 0:
                 gif_num = n_episodes
             else:
                 gif_num = min(save_gifs_num, n_episodes)
@@ -158,7 +158,7 @@ def run(args):
     model_path = os.path.join(config.restore, model_path)
     # model_path = config.restore_model
     # load agent 
-    learner = RMADDPG.init_from_save(model_path)
+    learner = MADDPG.init_from_save(model_path)
     if config.copy_checkpoint:
         learner.save(config.save_dir + "/model.ckpt")
 
@@ -166,8 +166,8 @@ def run(args):
     env_func = ENV_MAP[config.env]
     p_env_func = partial(env_func, config.scenario, benchmark=False, 
                         show_visual_range=config.show_visual_range)
-    env = make_parallel_env(p_env_func, config.env_config, config.eval_batch_size, 
-                            config.n_rollout_threads, config.seed)
+    env = make_parallel_env(p_env_func, config.env_config, 
+            config.eval_batch_size, config.n_rollout_threads, config.seed)
 
     #################################################### eval 
     # # NOTE: evaluate with direct rollouts 
@@ -178,9 +178,9 @@ def run(args):
 
     # NOTE: evaluate with runner 
     scheme = get_sample_scheme(learner.nagents, env.observation_space, env.action_space)
-    runner = EpisodeRunner(scheme, env, learner, logger, config.eval_batch_size,
-                            config.episode_length, device=config.device, t_env=0, 
-                            is_training=False)
+    runner = EpisodeRunner(scheme, env, learner, logger, 
+                config.eval_batch_size, config.episode_length, 
+                device=config.device, t_env=0, is_training=False)
 
     # save rollout trajectories, benchmark data and video 
     rollouts, results = maddpg_rollout_runner(

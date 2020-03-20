@@ -18,8 +18,9 @@ class DDPGAgent(object):
     critic, exploration noise)
     """
     def __init__(self, algo_type="MADDPG", act_space=None, obs_space=None, 
-                rnn_policy=False, rnn_critic=False, hidden_dim=64, lr=0.01, 
-                env_obs_space=None, env_act_space=None):
+                rnn_policy=False, rnn_critic=False, hidden_dim=64, lr=0.01,
+                norm_in=False, constrain_out=False,
+                env_obs_space=None, env_act_space=None, **kwargs):
         """
         Inputs:
             act_space: single agent action space (single space or Dict)
@@ -55,16 +56,15 @@ class DDPGAgent(object):
         else:
             num_out_pol = self.get_shape(act_space)
 
-        self.policy = Policy(num_in_pol, num_out_pol,
-                                 hidden_dim=hidden_dim,
-                                #  constrain_out=True,
-                                 discrete_action=self.discrete_action,
-                                 rnn_policy=rnn_policy)
-        self.target_policy = Policy(num_in_pol, num_out_pol,
-                                 hidden_dim=hidden_dim,
-                                #  constrain_out=True,
-                                 discrete_action=self.discrete_action,
-                                 rnn_policy=rnn_policy)
+        policy_kwargs = dict(
+            hidden_dim=hidden_dim,
+            norm_in=norm_in,
+            constrain_out=constrain_out,
+            discrete_action=self.discrete_action,
+            rnn_policy=rnn_policy
+        )
+        self.policy = Policy(num_in_pol, num_out_pol, **policy_kwargs)
+        self.target_policy = Policy(num_in_pol, num_out_pol, **policy_kwargs)
         hard_update(self.target_policy, self.policy)
 
         # Critic 
@@ -82,12 +82,13 @@ class DDPGAgent(object):
             num_in_critic = obs_space.shape[0] + self.get_shape(act_space)
 
         critic_net_fn = RecurrentNetwork if rnn_critic else MLPNetwork
-        self.critic = critic_net_fn(num_in_critic, 1,
-                                 hidden_dim=hidden_dim,
-                                 constrain_out=False)
-        self.target_critic = critic_net_fn(num_in_critic, 1,
-                                        hidden_dim=hidden_dim,
-                                        constrain_out=False)
+        critic_kwargs = dict(
+            hidden_dim=hidden_dim,
+            norm_in=norm_in,
+            constrain_out=constrain_out
+        )
+        self.critic = critic_net_fn(num_in_critic, 1, **critic_kwargs)
+        self.target_critic = critic_net_fn(num_in_critic, 1, **critic_kwargs)
         hard_update(self.target_critic, self.critic)
 
         # Optimizers 
@@ -149,10 +150,6 @@ class DDPGAgent(object):
             else:
                 h_t = h_critic  #.clone()
 
-            # DEBUG 
-            # h_t = torch.zeros_like(h_t)
-            # h_t = h_t.detach()
-
             # rollout 
             q = rnn_forward_sequence(
                 critic, vf_in, h_t, truncate_steps=truncate_steps)
@@ -196,10 +193,6 @@ class DDPGAgent(object):
                 h_t = self.policy_hidden_states.clone() # (B,H)
             else:
                 h_t = h_actor   #.clone()
-
-            # DEBUG 
-            # h_t = torch.zeros_like(h_t)
-            # h_t = h_t.detach()
 
             # rollout 
             seq_logits = rnn_forward_sequence(

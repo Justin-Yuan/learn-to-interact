@@ -35,7 +35,7 @@ class PPOAgent(object):
     def __init__(self, algo_type="CCPPO", act_space=None, obs_space=None, 
                 rnn_policy=False, rnn_critic=False, hidden_dim=64, lr=0.01, 
                 env_obs_space=None, env_act_space=None, 
-                kl_coeff=0.2, kl_target=0.01):
+                kl_coeff=0.2, kl_target=0.01, **kwargs):
         """
         Inputs:
             act_space: single agent action space (single space or Dict)
@@ -213,10 +213,13 @@ class PPOAgent(object):
             if k not in contract_keys:
                 continue
             action = act_samples[k]
-            _, dist = self.selector.select_action(
-                                seq_logits, explore=False)
-            _, old_dist = self.selector.select_action(
-                                logit_samples, explore=False)
+            # hard false and reparameterize false since need logits
+            _, dist = self.selector.select_action(seq_logits, 
+                explore=False, hard=False, reparameterize=False
+            )
+            _, old_dist = self.selector.select_action(logit_samples, 
+                explore=False, hard=False, reparameterize=False
+            )
             # evaluate log prob (B,T) -> (B,T,1)
             # NOTE: attention!!! if log_prob on rsample action, backprop is done twice and wrong
             log_prob += dist.log_prob(

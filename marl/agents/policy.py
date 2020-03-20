@@ -11,8 +11,9 @@ class Policy(nn.Module):
     """ wrapper on agent networks 
     supports multiple action outputs, e.g. (move, comm)
     """
-    def __init__(self, num_in_pol=0, num_out_pol=0, hidden_dim=64, constrain_out=False,
-                discrete_action=True, rnn_policy=False):
+    def __init__(self, num_in_pol=0, num_out_pol=0, hidden_dim=64, 
+                constrain_out=False, norm_in=False, discrete_action=True, 
+                rnn_policy=False, **kwargs):
         """
         Arguments:
             num_in_pol (int): policy input size
@@ -48,6 +49,7 @@ class Policy(nn.Module):
                                  hidden_dim=hidden_dim,
                                 #  constrain_out=True,
                                  constrain_out=constrain_out,
+                                 norm_in=norm_in,
                                  discrete_action=discrete_action,
                                  use_head=True)
         

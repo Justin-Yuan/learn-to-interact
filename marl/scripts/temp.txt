@@ -2,6 +2,7 @@
 
 python algorithms/rmaddpg/run_rmaddpg.py --sub_dir no-tanh --env_config mpe_hierarchy/configs/simple_spread.yaml --use_tensorboard --n_episodes 600000 --seed 3 --n_rollout_threads 2 --sample_batch_size 4 --n_updates_per_train 5 --tag test-lr0.001-no-tanh --lr 0.001 --overwrite discrete_action_space-bool-true
 
+python algorithms/rmaddpg/eval_rmaddpg.py --save_gifs --use_restore_env_config --use_restore_config --restore {}
 
 ########################
 

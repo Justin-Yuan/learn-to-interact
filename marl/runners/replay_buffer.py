@@ -40,10 +40,8 @@ class ReplayBuffer(SampleBatch):
     def can_sample(self, batch_size):
         return self.samples_in_buffer >= self.prefill_num
 
-    def sample(self, batch_size, norm_rews=False):
-        """ return SampleBatch 
-        TODO: how to normalize rewards (use whole buffer?)
-        """
+    def sample(self, batch_size):
+        """ return SampleBatch """
         assert self.can_sample(batch_size)
         if self.samples_in_buffer == batch_size:
             return self[:batch_size]
@@ -51,6 +49,27 @@ class ReplayBuffer(SampleBatch):
             # Uniform sampling only atm
             ep_ids = np.random.choice(self.samples_in_buffer, batch_size, replace=False)
             return self[ep_ids]
+
+    def make_index(self, batch_size):
+        """ return list of indices (length is batch size) to sample from """
+        assert self.can_sample(batch_size)
+        if self.episodes_in_buffer == batch_size:
+            return [i for i in range(batch_size)]
+        else:
+            return np.random.choice(self.samples_in_buffer, batch_size, replace=False)
+
+    def sample_index(self, index, norm_rews=False):
+        """ sample data given list of indices """
+        return self[index]
+
+    def make_latest_index(self, batch_size):
+        """ return list of latest indices (length is batch size) to sample from """
+        idx = [
+            (self.buffer_index - 1 - i) % self.samples_in_buffer 
+            for i in range(batch_size)
+        ]
+        np.random.shuffle(idx)
+        return idx
 
     def __repr__(self):
         return "ReplayBuffer. {}/{} episodes. Keys:{}".format(
@@ -98,10 +117,8 @@ class EpisodeReplayBuffer(EpisodeBatch):
     def can_sample(self, batch_size):
         return self.episodes_in_buffer >= self.prefill_num #batch_size
 
-    def sample(self, batch_size, norm_rews=False):
-        """ return EpsideBatch 
-        TODO: how to normalize episode rewards (use whole buffer?)
-        """
+    def sample(self, batch_size):
+        """ return EpsideBatch """
         assert self.can_sample(batch_size)
         if self.episodes_in_buffer == batch_size:
             return self[:batch_size]
@@ -109,6 +126,27 @@ class EpisodeReplayBuffer(EpisodeBatch):
             # Uniform sampling only atm
             ep_ids = np.random.choice(self.episodes_in_buffer, batch_size, replace=False)
             return self[ep_ids]
+
+    def make_index(self, batch_size):
+        """ return list of indices (length is batch size) to sample from """
+        assert self.can_sample(batch_size)
+        if self.episodes_in_buffer == batch_size:
+            return [i for i in range(batch_size)]
+        else:
+            return np.random.choice(self.episodes_in_buffer, batch_size, replace=False)
+
+    def sample_index(self, index, norm_rews=False):
+        """ sample data given list of indices """
+        return self[index]
+
+    def make_latest_index(self, batch_size):
+        """ return list of latest indices (length is batch size) to sample from """
+        idx = [
+            (self.buffer_index - 1 - i) % self.episodes_in_buffer 
+            for i in range(batch_size)
+        ]
+        np.random.shuffle(idx)
+        return idx
 
     def __repr__(self):
         return "EpisodeReplayBuffer. {}/{} episodes. Keys:{}".format(
