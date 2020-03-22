@@ -63,16 +63,15 @@ class DDPGAgentMOA(object):
         else:
             num_out_pol = self.get_shape(act_space)
 
-        self.policy = Policy(num_in_pol, num_out_pol,
-                                 hidden_dim=hidden_dim,
-                                #  constrain_out=True,
-                                 discrete_action=self.discrete_action,
-                                 rnn_policy=rnn_policy)
-        self.target_policy = Policy(num_in_pol, num_out_pol,
-                                 hidden_dim=hidden_dim,
-                                #  constrain_out=True,
-                                 discrete_action=self.discrete_action,
-                                 rnn_policy=rnn_policy)
+        policy_kwargs = dict(
+            hidden_dim=hidden_dim,
+            norm_in=norm_in,
+            constrain_out=constrain_out,
+            discrete_action=self.discrete_action,
+            rnn_policy=rnn_policy
+        )
+        self.policy = Policy(num_in_pol, num_out_pol, **policy_kwargs)
+        self.target_policy = Policy(num_in_pol, num_out_pol, **policy_kwargs)
         hard_update(self.target_policy, self.policy)
 
         # action selector (distribution wrapper)
@@ -96,12 +95,13 @@ class DDPGAgentMOA(object):
             num_in_critic = obs_space.shape[0] + self.get_shape(act_space)
 
         critic_net_fn = RecurrentNetwork if rnn_critic else MLPNetwork
-        self.critic = critic_net_fn(num_in_critic, 1,
-                                 hidden_dim=hidden_dim,
-                                 constrain_out=False)
-        self.target_critic = critic_net_fn(num_in_critic, 1,
-                                        hidden_dim=hidden_dim,
-                                        constrain_out=False)
+        critic_kwargs = dict(
+            hidden_dim=hidden_dim,
+            norm_in=norm_in,
+            constrain_out=constrain_out
+        )
+        self.critic = critic_net_fn(num_in_critic, 1, **critic_kwargs)
+        self.target_critic = critic_net_fn(num_in_critic, 1, **critic_kwargs)
         hard_update(self.target_critic, self.critic)
 
         # Optimizers 
@@ -112,10 +112,12 @@ class DDPGAgentMOA(object):
         self.model_of_agents = model_of_agents
         if model_of_agents:
             self.make_moa(hidden_dim=hidden_dim, lr=lr, rnn_policy=rnn_policy,
+                        norm_in=norm_in, constrain_out=constrain_out,
                         env_obs_space=env_obs_space, env_act_space=env_act_space)
 
 
     def make_moa(self, hidden_dim=64, lr=0.01, rnn_policy=False,
+                norm_in=False, constrain_out=False,
                 env_obs_space=None, env_act_space=None
     ):
         """ instantiate a policy, target and optimizer for training 
@@ -140,16 +142,15 @@ class DDPGAgentMOA(object):
             else:
                 num_out_pol = self.get_shape(act_space)
 
-            policy = Policy(num_in_pol, num_out_pol,
-                            hidden_dim=hidden_dim,
-                            #  constrain_out=True,
-                            discrete_action=self.discrete_action,
-                            rnn_policy=rnn_policy)
-            target_policy = Policy(num_in_pol, num_out_pol,
-                                    hidden_dim=hidden_dim,
-                                    #  constrain_out=True,
-                                    discrete_action=self.discrete_action,
-                                    rnn_policy=rnn_policy)
+            policy_kwargs = dict(
+                hidden_dim=hidden_dim,
+                norm_in=norm_in,
+                constrain_out=constrain_out,
+                discrete_action=self.discrete_action,
+                rnn_policy=rnn_policy
+            )
+            policy = Policy(num_in_pol, num_out_pol, **policy_kwargs)
+            target_policy = Policy(num_in_pol, num_out_pol, **policy_kwargs)
             hard_update(target_policy, policy)
 
             # push to moa containers 
@@ -287,8 +288,8 @@ class DDPGAgentMOA(object):
             for k, logits in act.items():
                 action, _ = self.selector.select_action(
                     logits, explore=False, hard=True, 
-                    reparameterize=requires_grad, temperature=0.5
-                ).reshape(bs, ts, -1) 
+                    reparameterize=requires_grad, temperature=0.5)
+                action = action.reshape(bs, ts, -1) 
                 act[k] = action 
                 # act[k] = self._soft_act(ac, requires_grad).reshape(bs, ts, -1)  
         return act
@@ -309,25 +310,29 @@ class DDPGAgentMOA(object):
             self.policy_hidden_states = hidden_states   # if mlp, still defafult None
 
             # customzied noise 
-            noise = Variable(Tensor(self.exploration.noise()),
-                                    requires_grad=False)
+            noise = None
             idx = 0 
+            if not self.discrete_action:
+                noise = Variable(Tensor(self.exploration.noise()),
+                                        requires_grad=False)
 
              # make distributions 
             act_d = {}
             for k, logits in logits_d.items():
                 dim = logits.shape[-1]
+                if not self.discrete_action:
+                    noise = noise[idx:idx+dim]
                 # use action selector with or without external noise
                 action, dist = self.selector.select_action(
-                    logits, explore=explore, hard=True, reparameterize=False,
-                    noise=noise[idx:idx+dim]
+                    logits, explore=explore, hard=True, 
+                    reparameterize=False, noise=noise
                 )
                 idx += dim 
                 # clip action 
                 if not self.discrete_action:    # continuous action
                     action = action.clamp(-1,  1)
                 act_d[k] = action
-        return action
+        return act_d
 
 
     def get_params(self):
@@ -500,7 +505,8 @@ class DDPGAgentMOA(object):
                     action, _ = self.selector.select_action(
                         logits, explore=False, hard=True, 
                         reparameterize=requires_grad, temperature=0.5
-                    ).reshape(bs, ts, -1) 
+                    )
+                action = action.reshape(bs, ts, -1) 
                 act[k] = action 
                 # act[k] = self._soft_act(ac, requires_grad).reshape(bs, ts, -1)  
         return act 

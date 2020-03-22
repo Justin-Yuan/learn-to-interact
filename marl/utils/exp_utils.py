@@ -288,6 +288,10 @@ def setup_evaluation(args):
         orig_config = read_file(args.restore + "/config.yaml")
         for k in ["exp", "sub_dir", "tag", "seed", "env", "scenario"]:
             setattr(args, k, orig_config[k])
+        # other optional fields 
+        for k in ["ensemble_size", "ensemble_config"]:
+            if k in orig_config:
+                setattr(args, k, orig_config[k])
 
     exp_dir = [args.save_dir]
     temp = []   # top-level dir

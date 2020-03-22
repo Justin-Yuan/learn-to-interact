@@ -327,6 +327,9 @@ class MADDPG(object):
             agent_i (int): index of agent to update
             parallel (bool): If true, will average gradients across threads
         """
+        def switch_idx(idx, curr_agent_idx):
+            return idx if idx > curr_agent_idx else idx + 1
+
         # [(B,1,D)]*N or [dict (B,1,D)]*N
         obs, acs, rews, next_obs, dones = self.add_virtual_dim(sample)   
         # preprocess rewards to reduce variance 
@@ -349,8 +352,9 @@ class MADDPG(object):
                         act_i = curr_agent.compute_action(
                             nobs, target=True, requires_grad=False)
                     else:   # use moa agent target 
+                        agent_j = switch_idx(i, agent_i)
                         act_i = curr_agent.compute_moa_action(
-                            i, nobs, target=True, requires_grad=False, return_logits=True)
+                            agent_j, nobs, target=True, requires_grad=False, return_logits=True)
                 else:   # use each agents' target directly
                     act_i = self.agents[i].compute_action(
                         nobs, target=True, requires_grad=False)
@@ -495,7 +499,7 @@ class MADDPG(object):
         results = {}
 
         # perform update on each moa agent 
-        for agent_j in range(1, len(self.nagents)):
+        for agent_j in range(1, self.nagents):
             # current agent's j-th moa 
             pi_j = curr_agent.moa_policies[agent_j]
             curr_agent.moa_optimizers[agent_j].zero_grad()

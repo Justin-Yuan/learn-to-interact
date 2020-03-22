@@ -53,7 +53,7 @@ class ReplayBuffer(SampleBatch):
     def make_index(self, batch_size):
         """ return list of indices (length is batch size) to sample from """
         assert self.can_sample(batch_size)
-        if self.episodes_in_buffer == batch_size:
+        if self.samples_in_buffer == batch_size:
             return [i for i in range(batch_size)]
         else:
             return np.random.choice(self.samples_in_buffer, batch_size, replace=False)

@@ -229,11 +229,12 @@ def switch_batch(b, i):
     # fields to be shifted for agent i
     fields = ["obs", "action", "reward", "next_obs", "done"]
     out_data = deepcopy(b.data)
+    scheme = deepcopy(b.scheme)
 
-    if isinstance(batch, SampleBatch):
+    if isinstance(b, SampleBatch):
         target = out_data
         batch_func = partial(SampleBatch, b.scheme, b.batch_size, device=b.device)
-    elif isinstance(batch, EpisodeBatch):
+    elif isinstance(b, EpisodeBatch):
         target = out_data.transition_data
         batch_func = partial(EpisodeBatch, b.scheme, b.batch_size, b.max_seq_length, device=b.device)
     else:
@@ -244,19 +245,27 @@ def switch_batch(b, i):
         # cache fields for agent i before overwriting
         i_keys = filter_key("{}/{}".format(f,i), target)
         i_data = [deepcopy(target[k]) for k in i_keys]
+        i_scheme = [deepcopy(b.scheme[k]) for k in i_keys]
         # shift all fields from agent 0~i-1 to 1~i
         for idx in range(i-1,-1,-1):
             old_keys = filter_key("{}/{}".format(f,idx), target)
             for key in old_keys:
                 new_key = key.replace("{}/{}".format(f,idx), "{}/{}".format(f,idx+1))
                 target[new_key] = target[key]
+                scheme[new_key] = b.scheme[key]
         # place fileds from agent i to 0            
-        for i_key, i_d in zip(i_keys, i_data):
+        for i_key, i_d, i_s in zip(i_keys, i_data, i_scheme):
             new_i_key = i_key.replace("{}/{}".format(f,i), "{}/{}".format(f,0))
             target[new_i_key] = i_d
+            scheme[new_i_key] = i_s 
 
     # make shifted batch 
-    out = batch_func(data=out_data)
+    if isinstance(b, SampleBatch):
+        out = SampleBatch(
+            scheme, b.batch_size, data=out_data, device=b.device)
+    elif isinstance(b, EpisodeBatch):
+        out = EpisodeBatch(
+            scheme, b.batch_size, b.max_seq_length, data=out_data, device=b.device)
     return out 
 
     

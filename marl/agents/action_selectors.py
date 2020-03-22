@@ -16,10 +16,30 @@ NOTE: can also make selectors with specific noisee types
 e.g. epsilon-greedy
 """
 
+def categorical_entropy(self):
+    """ since torch RelaxedOneHotCategorical does not implement entropy()
+        need to provide it with  our own one
+    reference: 
+    - https://pytorch.org/docs/stable/_modules/torch/distributions/relaxed_categorical.html#RelaxedOneHotCategorical
+    - https://pytorch.org/docs/stable/_modules/torch/distributions/categorical.html#Categorical
+    """
+    # p_log_p = self.logits * self.probs
+    # return -p_log_p.sum(-1)
+    return self.base_dist._categorical.entropy()
+
+def categorical_log_prob(self, logits):
+    """ torch RelaxedOneHotCategorical log_prob is weird (uses that of TransformedDistribution)
+        need to use log_prob from base_dist instead 
+    """
+    return self.base_dist.log_prob(logits)
+
+
 
 class DiscreteActionSelector():
     def __init__(self):
         self.dist_fn = D.relaxed_categorical.RelaxedOneHotCategorical
+        self.dist_fn.entropy = categorical_entropy
+        self.dist_fn.log_prob = categorical_log_prob
 
     def select_action(self, logits, hard=True, temperature=1.0, 
         reparameterize=True, explore=True, **kwargs

@@ -18,7 +18,7 @@ from runners.episode_runner import EpisodeRunner
 from utils.exp_utils import setup_evaluation, ExperimentLogger 
 from utils.exp_utils import time_left, time_str, merge_dict
 
-from algorithms.maddpg import MADDPG
+from algorithms.maddpg import MADDPG, MADDPGEnsemble
 from algorithms.maddpg.utils import get_sample_scheme, make_parallel_env, log_results
 
 
@@ -56,7 +56,7 @@ def parse_args():
                         help="Saves gif of each episode into model directory")
     parser.add_argument("--save_gifs_num", default=0, type=int,
                         help="number of episode gifs to save")
-    parser.add_argument("--fps", default=30, type=int, 
+    parser.add_argument("--fps", default=20, type=int, 
                         help="frame per second of generated gif")
 
     # Environment
@@ -74,6 +74,8 @@ def parse_args():
                         help="max episode length")
     parser.add_argument("--show_visual_range", default=False, action='store_true', 
                         help='if to show agent visual range when rendering')
+    parser.add_argument("--ensemble", default=False, action='store_true',
+                        help="if to evaluate on ensemble")
     
     # parallelism 
     parser.add_argument("--n_rollout_threads", default=1, type=int, 
@@ -96,6 +98,8 @@ def maddpg_rollout_runner(config, learner, runner, n_episodes=10, episode_length
 
     n_test_runs = max(1, n_episodes // runner.batch_size)
     assert n_episodes % runner.batch_size == 0, "n_episodes should be divisible by batch_size"
+    if config.ensemble:
+        learner.sample_agents()
     learner.prep_rollouts(device=config.device)
 
     for _ in range(n_test_runs):
@@ -158,7 +162,8 @@ def run(args):
     model_path = os.path.join(config.restore, model_path)
     # model_path = config.restore_model
     # load agent 
-    learner = MADDPG.init_from_save(model_path)
+    leaner_class = MADDPGEnsemble if config.ensemble else MADDPG
+    learner = leaner_class.init_from_save(model_path)
     if config.copy_checkpoint:
         learner.save(config.save_dir + "/model.ckpt")
 

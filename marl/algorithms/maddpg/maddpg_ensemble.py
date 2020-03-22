@@ -1,5 +1,6 @@
 from collections import defaultdict
 from copy import deepcopy 
+import numpy as np 
 import torch
 import torch.nn.functional as F
 from gym.spaces import Box, Discrete
@@ -35,7 +36,6 @@ class MADDPGEnsemble(object):
             hidden_dim (int): Number of hidden dimensions for networks
             discrete_action (bool): Whether or not to use discrete action space
         """
-        self.nagents = len(alg_types)
         self.alg_types = alg_types
         self.agent_init_params = agent_init_params
         self.agent_pool = [
@@ -44,6 +44,10 @@ class MADDPGEnsemble(object):
         ]            
         # map from active agent to available agent pool
         self.agent_map = agent_map
+        if agent_map is None:   # normal maddpg 
+            self.nagents = len(alg_types)
+        else:
+            self.nagents = len(agent_map)
         # active agents, either for sampling or training 
         self.agent_indices = [-1] * self.nagents
         self.agents = [None] * self.nagents
@@ -178,12 +182,11 @@ class MADDPGEnsemble(object):
         
         obs_space_dict, act_space_dict = {}, {}
         for a_type in list(set(env.agent_types)):
+            idx = agent_list.index(a_type)
             # record agent type to obs space
-            obs_idx = env.observation_space.index(a_type)
-            obs_space_dict[a_type] = env.observation_space[obs_idx]
+            obs_space_dict[a_type] = env.observation_space[idx]
             # record agent type to act space
-            act_idx = env.action_space.index(a_type)
-            act_space_dict[a_type] = env.action_space[act_idx]
+            act_space_dict[a_type] = env.action_space[idx]
 
 
         # make init params for pool of agents
@@ -195,15 +198,13 @@ class MADDPGEnsemble(object):
 
         for atype, algtype, acsp, obsp in zip(agent_list, alg_types, act_spaces, obs_spaces):           
             # used in initializing agent (including policy and critic)
-            obs_idx = env.observation_space.index(a_type)
-            act_idx = env.action_space.index(a_type)
-
+            idx = agent_list.index(atype)
             agent_init_params.append({
                 'algo_type': algtype,
                 'act_space': acsp,
                 'obs_space': obsp,
-                'env_obs_space': switch_list(env.observation_space, obs_idx),
-                'env_act_space': switch_list(env.action_space, act_idx)
+                'env_obs_space': switch_list(env.observation_space, idx),
+                'env_act_space': switch_list(env.action_space, idx)
             })
 
         # make learaner 
@@ -228,7 +229,8 @@ class MADDPGEnsemble(object):
         save_dict = torch.load(filename)
         instance = cls(**save_dict['init_dict'])
         instance.init_dict = save_dict['init_dict']
-        for a, params in zip(instance.agents, save_dict['agent_params']):
+        # for a, params in zip(instance.agents, save_dict['agent_params']):
+        for a, params in zip(instance.agent_pool, save_dict['agent_params']):
             a.load_params(params)
         return instance
 

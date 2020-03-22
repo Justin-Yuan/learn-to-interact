@@ -14,7 +14,7 @@ from algorithms.maddpg.utils import get_sample_scheme, dispatch_samples
 from algorithms.maddpg.utils import make_parallel_env, log_results
 from algorithms.maddpg.utils import log_weights
 from algorithms.maddpg.utils import switch_batch
-from algorithms.maddpg import MADDPG
+from algorithms.maddpg import MADDPGEnsemble
 
 from runners.make_env import ENV_MAP
 from runners.replay_buffer import ReplayBuffer
@@ -186,9 +186,9 @@ def run(args):
 
     # NOTE: make learner agent 
     if is_restore or config.restore_model is not None:
-        learner = MADDPG.init_from_save(config.restore_model)
+        learner = MADDPGEnsemble.init_from_save(config.restore_model)
     else:    
-        learner = MADDPG.init_from_env(
+        learner = MADDPGEnsemble.init_from_env(
             env, 
             agent_alg=config.agent_alg,
             adversary_alg=config.adversary_alg,
