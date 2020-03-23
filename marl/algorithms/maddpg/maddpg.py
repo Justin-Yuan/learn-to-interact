@@ -18,6 +18,7 @@ class MADDPG(object):
     """
     def __init__(self, agent_init_params, alg_types,
                  gamma=0.95, tau=0.01, lr=0.01, hidden_dim=64,
+                 norm_in=False, constrain_out=False,
                 #  discrete_action=False
                 model_of_agents=False, moa_entropy_coeff=0.1, 
                 **kwargs
@@ -43,11 +44,13 @@ class MADDPG(object):
         self.model_of_agents = model_of_agents
         if not model_of_agents:
             self.agents = [
-                DDPGAgent(lr=lr, hidden_dim=hidden_dim, **params)
+                DDPGAgent(lr=lr, hidden_dim=hidden_dim, norm_in=norm_in,
+                    constrain_out=constrain_out, **params)
                 for params in agent_init_params]
         else:
             self.agents = [
-                DDPGAgentMOA(model_of_agents=True, lr=lr, hidden_dim=hidden_dim, **params)
+                DDPGAgentMOA(model_of_agents=True, lr=lr, hidden_dim=hidden_dim, 
+                    norm_in=norm_in, constrain_out=constrain_out, **params)
                 for params in agent_init_params]
             self.moa_entropy_coeff = moa_entropy_coeff
             self.moa_pol_dev = "cpu"

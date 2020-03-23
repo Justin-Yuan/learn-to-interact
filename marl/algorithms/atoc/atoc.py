@@ -10,13 +10,12 @@ from utils.misc import soft_update, average_gradients, onehot_from_logits, gumbe
 
 MSELoss = torch.nn.MSELoss()
 
-class RMADDPG(object):
-    """
-    Wrapper class for DDPG-esque (i.e. also MADDPG) agents in multi-agent task
+class ATOC(object):
+    """ Learning Attentional Communication for Multi-Agent Cooperation
+        reference: https://arxiv.org/pdf/1805.07733.pdf
     """
     def __init__(self, agent_init_params=None, alg_types=None,
                  gamma=0.95, tau=0.01, lr=0.01, hidden_dim=64,
-                 norm_in=False, constrain_out=False,
                 #  discrete_action=False
                 **kwargs
         ):
@@ -37,10 +36,8 @@ class RMADDPG(object):
         """
         self.nagents = len(alg_types)
         self.alg_types = alg_types
-        self.agents = [
-            DDPGAgent(lr=lr, hidden_dim=hidden_dim, norm_in=norm_in,
-                constrain_out=constrain_out, **params)
-            for params in agent_init_params]
+        self.agents = [DDPGAgent(lr=lr, hidden_dim=hidden_dim, **params)
+                       for params in agent_init_params]
         self.agent_init_params = agent_init_params
         self.gamma = gamma
         self.tau = tau
@@ -207,6 +204,8 @@ class RMADDPG(object):
 
     def init_hidden(self, batch_size):
         """ for rnn policy, training or evaluation """
+        # TODO: here 
+        init_state()
         for a in self.agents:
             a.init_hidden(batch_size) 
 

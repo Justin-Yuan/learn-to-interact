@@ -10,10 +10,10 @@ from collections import OrderedDict, defaultdict
 import torch
 
 # local
-from algorithms.rmaddpg.utils import get_sample_scheme, dispatch_samples
-from algorithms.rmaddpg.utils import make_parallel_env, log_results
-from algorithms.rmaddpg.utils import log_weights
-from algorithms.rmaddpg import RMADDPG
+from algorithms.atoc.utils import get_sample_scheme, dispatch_samples
+from algorithms.atoc.utils import make_parallel_env, log_results
+from algorithms.atoc.utils import log_weights
+from algorithms.atoc import ATOC
 
 from runners.make_env import ENV_MAP
 from runners.sample_batch import EpisodeBatch
@@ -128,11 +128,7 @@ def parse_args():
                         help="type of critic network", choices=["mlp", "rnn", "gnn"])
     parser.add_argument("--actor", type=str, default="mlp",
                         help="type of actor network", choices=["mlp", "rnn", "gnn"])
-    parser.add_argument("--norm_in", default=False, action='store_true',
-                        help="if to normalize inputs to agent networks")
-    parser.add_argument("--constrain_out", default=False, action='store_true',
-                        help="if to use tanh for network final activation")
-    
+
     # evaluation 
     parser.add_argument("--no_eval", default=False, action='store_true',
                         help="do evaluation during training")
@@ -199,9 +195,7 @@ def run(args):
             lr=config.lr,
             hidden_dim=config.hidden_dim,
             rnn_policy=(config.actor == "rnn"),
-            rnn_critic=(config.critic == "rnn"),
-            norm_in=config.norm_in,
-            constrain_out=config.constrain_out
+            rnn_critic=(config.critic == "rnn")
         )
 
     # NOTE: make sampling runner (env wrapper)  

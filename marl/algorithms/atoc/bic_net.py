@@ -16,7 +16,6 @@ class RMADDPG(object):
     """
     def __init__(self, agent_init_params=None, alg_types=None,
                  gamma=0.95, tau=0.01, lr=0.01, hidden_dim=64,
-                 norm_in=False, constrain_out=False,
                 #  discrete_action=False
                 **kwargs
         ):
@@ -37,10 +36,8 @@ class RMADDPG(object):
         """
         self.nagents = len(alg_types)
         self.alg_types = alg_types
-        self.agents = [
-            DDPGAgent(lr=lr, hidden_dim=hidden_dim, norm_in=norm_in,
-                constrain_out=constrain_out, **params)
-            for params in agent_init_params]
+        self.agents = [DDPGAgent(lr=lr, hidden_dim=hidden_dim, **params)
+                       for params in agent_init_params]
         self.agent_init_params = agent_init_params
         self.gamma = gamma
         self.tau = tau

@@ -280,20 +280,20 @@ class GCN(nn.Module):
             if isinstance(ff, nn.Linear):
                 nn.init.xavier_uniform_(ff.weight.data)
                 if ff.bias is not None:
-                ff.bias.data.zero_()
+                    ff.bias.data.zero_()
 
         if self.use_head:
             ff = self.output_func 
             if isinstance(ff, nn.Linear):
                 nn.init.xavier_uniform_(ff.weight.data)
                 if ff.bias is not None:
-                ff.bias.data.zero_()
+                    ff.bias.data.zero_()
 
         for ff in self.att_func:
             if isinstance(ff, nn.Linear):
                 nn.init.xavier_uniform_(ff.weight.data)
                 if ff.bias is not None:
-                ff.bias.data.zero_()
+                    ff.bias.data.zero_()
 
     def forward(self, nodes, edges, masks=None, h_in=None):
         """ stack of gcn layers with attention 

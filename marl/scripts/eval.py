@@ -173,7 +173,9 @@ def plot_returns(args):
                 adata["ydata"][i] = window_filter(adata["ydata"][i], smooth=smooth)
                 # adata["ydata"][i] = iir_filter(adata["ydata"][i], weight=args.smooth_ratio)
     # start plotting 
-    plt.figure()
+    # plt.figure()
+    plt.figure(figsize=(20,8))
+    # plt.rcParams["figure.figsize"] = (20,3)
     sns.set(style="darkgrid")
     for i, (algo, adata) in enumerate(data.items()):
         x = adata["xdata"][0]
