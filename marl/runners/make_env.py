@@ -13,9 +13,16 @@ communication actions in this array. See environment.py for more details.
 """
 import os 
 import sys 
-mpe_hier_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))    # top level 
-mpe_hier_path = os.path.join(mpe_hier_path, "mpe_hierarchy")
+dir_path = os.path.dirname(os.path.abspath(__file__))   # runenrs/
+dir_path = os.path.dirname(dir_path)    # marl/
+dir_path = os.path.dirname(dir_path)    # learn-to-interact/
+dir_path = os.path.dirname(dir_path)    # /
+
+mpe_hier_path = os.path.join(dir_path, "envs", "mpe_hierarchy")
 sys.path.insert(1, mpe_hier_path)
+
+mujoco_multi_path = os.path.join(dir_path, "envs", "multiagent_mujoco/src")
+sys.path.insert(2, mujoco_multi_path)
 
 # def make_env(scenario_name, benchmark=False, discrete_action=False):
 #     '''
@@ -53,7 +60,7 @@ sys.path.insert(1, mpe_hier_path)
 #     return env
 
 
-
+# top tasks with (modified) openai multi-agent particle env
 def make_env_hier(scenario_name, benchmark=False, show_visual_range=True, **kwargs):
     '''
     Creates a MultiAgentEnv object as env. This can be used similar to a gym
@@ -102,10 +109,85 @@ def make_env_hier(scenario_name, benchmark=False, show_visual_range=True, **kwar
     return env
 
 
+# continuous control task with multi-agent abstraction on mujoco env
+def make_mujoco_multi(scenario_name, k_categories=None, global_categories=None, **kwargs):
+    """ 
+        reference: https://github.com/schroederdewitt/multiagent_mujoco
+    Arguments: 
+    """
+    from multiagent_mujoco.mujoco_multi import MujocoMulti
+    env_args_map = {
+        "2_Agent_Ant": {
+            "scenario": "Ant-v2",
+            "agent_conf": "2x4",
+            "agent_obsk": 1
+        },
+        "2_Agent_Ant_Diag": {
+            "scenario": "Ant-v2",
+            "agent_conf": "2x4d",
+            "agent_obsk": 1
+        },
+        "4_Agent_Ant": {
+            "scenario": "Ant-v2",
+            "agent_conf": "4x2",
+            "agent_obsk": 1
+        },
+        "2_Agent_HalfCheetah": {
+            "scenario": "HalfCheetah-v2",
+            "agent_conf": "2x3",
+            "agent_obsk": 1
+        },
+        "6_Agent_HalfCheetah": {
+            "scenario": "HalfCheetah-v2",
+            "agent_conf": "6x1",
+            "agent_obsk": 1
+        },
+        "3_Agent_Hopper": {
+            "scenario": "Hopper-v2",
+            "agent_conf": "3x1",
+            "agent_obsk": 1
+        },
+        "2_Agent_Humanoid": {
+            "scenario": "Humanoid-v2",
+            "agent_conf": "2x8",
+            "agent_obsk": 1
+        },
+        "2_Agent_HumanoidStandup": {
+            "scenario": "HumanoidStandup-v2",
+            "agent_conf": "2x8",
+            "agent_obsk": 1
+        },
+        "2_Agent_Reacher": {
+            "scenario": "Reacher-v2",
+            "agent_conf": "2x1",
+            "agent_obsk": 1
+        },
+        "2_Agent_Swimmer": {
+            "scenario": "Swimmer-v2",
+            "agent_conf": "2x1",
+            "agent_obsk": 1
+        },
+        "2_Agent_Walker": {
+            "scenario": "Walker-v2",
+            "agent_conf": "2x1",
+            "agent_obsk": 1
+        },
+    }
+    env_args = env_args_map[scenario_name]
+    if k_categories is not None:
+        env_args["k_categories"] = k_categories
+    if global_categories is not None:
+        env_args["global_categories"] = global_categories
+
+    env = MujocoMulti(**env_args)
+    return env 
+
+
 #####################################################################################
 ### env mapping  
 #####################################################################################
 
 ENV_MAP = {
-    "mpe_hier": make_env_hier
+    "mpe_hier": make_env_hier,
+    "mujoco_multi": make_mujoco_multi
 }

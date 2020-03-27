@@ -49,7 +49,7 @@ def get_sample_scheme(n_agents, obs_spaces, act_spaces):
 
         # atoc communication group 
         scheme["comm_group"] = {"vshape": (n_agents,n_agents), "dtype": torch.uint8}
-        scheme["is_comm"] = {"vshape": (n_agents,), "dtype": torch.uint8}
+        scheme["comm_order"] = {"vshape": (n_agents,), "dtype": torch.uint8}
     return scheme
 
 
@@ -208,29 +208,30 @@ def log_weights(learner, logger, t_env):
 class CommCoordinator(objet):
     """ manager class to coordinate multi-agent communication
     """
-    def __init__(self, nagents):
+    def __init__(self, nagents, comm_length=15, bandwidth=4, comm_range=0.3, **kwargs):
         self.nagents = nagents
+        # strategy specific configs 
+        self.comm_length = comm_length
+        self.bandwidth = bandwidth
+        self.comm_range = comm_range
 
     def init_comm(self, batch_size, device="cpu"):
-        self.is_comm = torch.zeros(batch_size, self.nagents).long().to(device)
+        self.comm_order = torch.zeros(batch_size, self.nagents).long().to(device)
         self.comm_group = torch.zeros(batch_size, self.nagents, self.nagents).long().to(device)
         self.comm_count = torch.zeros(batch_size, self.nagents).long().to(device)
 
-    def make_comm_group(self, is_comm, info, cur_comm_group, cur_is_comm):
+    def make_comm(self, is_comm, info):
         """ strategy to form communication groups (for 1 sample in batch)
         Arguments:
             - is_comm: binary tensor, (N,)
             - imfo: dict of env returned info 
                 - {"n": {"sorted_agents": ...}} 
-            - cur_comm_group: (N,N) current communication group
-            - cur_is_comm: (N,) current communication status 
-        Returns: 
-            - 
         """
         # order initiator
         initiator_index = is_comm.nonzero(as_tuple=True)[0].tolist()
         initiator_index = np.random.permutation(initiator_index)
         # select cooperators 
+        next(x[0] for x in enumerate(L) if x[1] > 0.7)
 
         ## filter based on proximity 
 
