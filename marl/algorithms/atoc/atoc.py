@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from gym.spaces import Box, Discrete
 
-from agents import DEFAULT_ACTION, DDPGAgent
+from agents import DEFAULT_ACTION, ATOCAgent
 from utils.misc import soft_update, average_gradients, onehot_from_logits, gumbel_softmax
 
 
@@ -36,13 +36,15 @@ class ATOC(object):
         """
         self.nagents = len(alg_types)
         self.alg_types = alg_types
-        self.agents = [DDPGAgent(lr=lr, hidden_dim=hidden_dim, **params)
-                       for params in agent_init_params]
+        # self.agents = [ATOCAgent(lr=lr, hidden_dim=hidden_dim, **params)
+        #                for params in agent_init_params]
+        # agent share parameters 
+        self.agents = [ATOCAgent(lr=lr, hidden_dim=hidden_dim, **agent_init_params[0])]
         self.agent_init_params = agent_init_params
         self.gamma = gamma
         self.tau = tau
         self.lr = lr
-        # self.discrete_action = discrete_action
+        # self.discrete_            action = discrete_action
         self.pol_dev = 'cpu'  # device for policies
         self.critic_dev = 'cpu'  # device for critics
         self.trgt_pol_dev = 'cpu'  # device for target policies
@@ -56,6 +58,11 @@ class ATOC(object):
 
     def reset_summaries(self):
         self.agent_losses.clear()
+
+    @property
+    def agent(self):
+        """ for conveniently accesssing shared agent """
+        return self.agents[0]
 
     @property
     def policies(self):
@@ -118,8 +125,10 @@ class ATOC(object):
         """ Save trained parameters of all agents into one file
         """
         self.prep_training(device='cpu')  # move parameters to CPU before saving
-        save_dict = {'init_dict': self.init_dict,
-                     'agent_params': [a.get_params() for a in self.agents]}
+        save_dict = {
+            'init_dict': self.init_dict,
+            'agent_params': [a.get_params() for a in self.agents]
+        }
         torch.save(save_dict, filename)
 
     @classmethod
@@ -170,7 +179,18 @@ class ATOC(object):
         return instance
 
     ############################################ NOTE: step/act
-    def step(self, observations, explore=False):
+    def init_state(self, batch_size, device="cpu"):
+        """ make state containers for stateful rollout 
+        """
+        # for agent communication
+        self.is_comm = torch.zeros(batch_size, self.nagents).long().to(device)
+        self.comm_group = torch.zeros(batch_size, self.nagents, self.nagents).long().to(device)
+        self.comm_count = torch.zeros(batch_size, self.nagents).long().to(device)
+        # make queue for group Q value advantages 
+        self.Q_queue = []
+
+
+    def step(self, observations, explore=False, infos=None, **kwargs):
         """ Take a step forward in environment with all agents
         Arguments:
             observations: List of observations for each agent
@@ -178,18 +198,32 @@ class ATOC(object):
         Returnss:
             actions: List of action (np array or dict of it) for each agent
         """
-        # actions = []
-        # for a, obs in zip(self.agents, observations):
-        #     action = a.step(obs, explore=explore)  # dict (B,A)
-        #     if DEFAULT_ACTION in action:
-        #         actions.append(action[DEFAULT_ACTION])
-        #     else:
-        #         actions.append(action)
-        # return actions
-        return [
+        # get thought, [(B,H)]*N
+        thoughts = [self.agent.step_thought(obs) in observations]
+        # communicate, [(B,1)]*N -> [(B,)]*N
+        is_comm =  [
+            self.agent.initiate_comm(h_i, binary=True).squeeze()
+            for h_i in thoughts]
+        # make communication group 
+        for i in range(self.nagents):
+            if is_comm[i] > 0.5:
+
+        sorted_agents 
+        # output action 
+        actions = [
             a.step(obs, explore=explore) 
             for a, obs in zip(self.agents, observations)
         ]
+        # push Q advantages for attention unit training 
+        if explore:
+            dQ = 
+            self.Q_queue.append([h, dQ])
+        
+        step_info = {
+            "is_comm": 
+            "comm_group":
+        }
+        return actions, step_info
        
     ############################################ NOTE: update
     def update_all_targets(self):
@@ -204,8 +238,6 @@ class ATOC(object):
 
     def init_hidden(self, batch_size):
         """ for rnn policy, training or evaluation """
-        # TODO: here 
-        init_state()
         for a in self.agents:
             a.init_hidden(batch_size) 
 

@@ -20,7 +20,7 @@ def worker(remote, parent_remote, env_fn_wrappers):
         if all(done):
             ob = env.reset()
         return ob, reward, done, info
-
+    
     # parent_remote.close()
     envs = [env_fn_wrapper() for env_fn_wrapper in env_fn_wrappers.x]
     try:
@@ -168,9 +168,13 @@ class SubprocVecEnv(VecEnv):
         self._assert_not_closed()
         for remote in self.remotes:
             remote.send(('reset', None))
-        obs = [remote.recv() for remote in self.remotes]
-        obs = _flatten_list(obs)
-        return _flatten_obs(obs)
+        # obs = [remote.recv() for remote in self.remotes]
+        # obs = _flatten_list(obs)
+        # return _flatten_obs(obs)
+        results = [remote.recv() for remote in self.remotes]
+        results = _flatten_list(results)
+        obs, infos = zip(*results)
+        return  _flatten_obs(obs), infos
 
     def get_images(self):
         """ called by parent `render` to support tiling images """
@@ -237,8 +241,11 @@ class DummyVecEnv(VecEnv):
         return _flatten_obs(obs), np.array(rews), np.array(dones), infos
 
     def reset(self):        
-        obs = [env.reset() for env in self.envs]
-        return _flatten_obs(obs)
+        # obs = [env.reset() for env in self.envs]
+        # return _flatten_obs(obs)
+        results = [env.reset() for env in self.envs]
+        obs, infos = zip(*results)
+        return _flatten_obs(obs), infos
 
     def close(self):
         if self.closed:

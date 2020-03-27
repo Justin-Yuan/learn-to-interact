@@ -91,9 +91,9 @@ def make_parallel_env(env_func, env_config, batch_size, n_rollout_threads, seed)
             # do not set seed i if -1 (e.g. for evaluation)
             if seed >= 0:
                 # env.seed(seed + rank * 1000)
-                random.seed(seed + rank * 1000)
+                # random.seed(seed + rank * 1000)
                 np.random.seed(seed + rank * 1000)
-                torch.manual_seed(seed + rank * 1000)
+                # torch.manual_seed(seed + rank * 1000)
                 # mpe has its own seeding 
                 env = env_func(seed=seed + rank * 1000, **env_config)
             else:

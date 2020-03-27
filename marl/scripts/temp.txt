@@ -11,31 +11,31 @@ srun -p cpu --gres=gpu:0 -c 4 --mem=15G "python algorithms/rmaddpg/run_rmaddpg.p
 
 ######################## partial mlp, rnn 
 
-srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir normal --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 1000000 --seed 1 --n_rollout_threads 4 --sample_batch_size 8 --n_updates_per_train 5 --batch_size 1024  --lr 0.001 --tag C-cont-mlp --no_render --overwrite discrete_action_space-bool-false"
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir normal --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 1000000 --seed 1 --n_rollout_threads 4 --sample_batch_size 8 --n_updates_per_train 5 --batch_size 1024  --lr 0.001 --tag C-cont-mlp --no_render --overwrite discrete_action_space-bool-false --constrain_out"
 
 
-srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir normal --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 1000000 --seed 1 --n_rollout_threads 4 --sample_batch_size 8 --n_updates_per_train 5 --batch_size 1024 --lr 0.001 --actor rnn --tag C-cont-rnn-actor --no_render --overwrite discrete_action_space-bool-false"
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir normal --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 1000000 --seed 1 --n_rollout_threads 4 --sample_batch_size 8 --n_updates_per_train 5 --batch_size 1024 --lr 0.001 --actor rnn --tag C-cont-rnn-actor --no_render --overwrite discrete_action_space-bool-false --constrain_out"
 
 
-srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir normal --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 1000000 --seed 1 --n_rollout_threads 4 --sample_batch_size 8 --n_updates_per_train 5 --batch_size 1024 --lr 0.001 --critic rnn --tag C-cont-rnn-critic --no_render --overwrite discrete_action_space-bool-false"
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir normal --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 1000000 --seed 1 --n_rollout_threads 4 --sample_batch_size 8 --n_updates_per_train 5 --batch_size 1024 --lr 0.001 --critic rnn --tag C-cont-rnn-critic --no_render --overwrite discrete_action_space-bool-false --constrain_out"
 
 
-srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir normal --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 1000000 --seed 1 --n_rollout_threads 4 --sample_batch_size 8 --n_updates_per_train 5 --batch_size 1024 --lr 0.001 --actor rnn --critic rnn --tag C-cont-rnn-ac --no_render --overwrite discrete_action_space-bool-false"
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir normal --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 1000000 --seed 1 --n_rollout_threads 4 --sample_batch_size 8 --n_updates_per_train 5 --batch_size 1024 --lr 0.001 --actor rnn --critic rnn --tag C-cont-rnn-ac --no_render --overwrite discrete_action_space-bool-false --constrain_out"
 
 
 
 ######################## partial with comm 
 
-srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir normal --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 1000000 --seed 1 --n_rollout_threads 4 --sample_batch_size 8 --n_updates_per_train 5 --batch_size 1024 --lr 0.001 --tag C-cont-mlp-comm --no_render --overwrite discrete_action_space-bool-false agent_silence-bool-false"
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir normal --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 1000000 --seed 1 --n_rollout_threads 4 --sample_batch_size 8 --n_updates_per_train 5 --batch_size 1024 --lr 0.001 --tag C-cont-mlp-comm --no_render --overwrite discrete_action_space-bool-false agent_silence-bool-false --constrain_out"
 
 
-srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir normal --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 1000000 --seed 1 --n_rollout_threads 4 --sample_batch_size 8 --n_updates_per_train 5 --batch_size 1024 --lr 0.001 --actor rnn --tag C-cont-rnn-actor-comm --no_render --overwrite discrete_action_space-bool-false agent_silence-bool-false"
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir normal --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 1000000 --seed 1 --n_rollout_threads 4 --sample_batch_size 8 --n_updates_per_train 5 --batch_size 1024 --lr 0.001 --actor rnn --tag C-cont-rnn-actor-comm --no_render --overwrite discrete_action_space-bool-false agent_silence-bool-false --constrain_out"
 
 
-srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir normal --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 1000000 --seed 1 --n_rollout_threads 4 --sample_batch_size 8 --n_updates_per_train 5 --batch_size 1024 --lr 0.001 --critic rnn --tag C-cont-rnn-critic-comm --no_render --overwrite discrete_action_space-bool-false agent_silence-bool-false"
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir normal --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 1000000 --seed 1 --n_rollout_threads 4 --sample_batch_size 8 --n_updates_per_train 5 --batch_size 1024 --lr 0.001 --critic rnn --tag C-cont-rnn-critic-comm --no_render --overwrite discrete_action_space-bool-false agent_silence-bool-false --constrain_out"
 
 
-srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir normal --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 1000000 --seed 1 --n_rollout_threads 4 --sample_batch_size 8 --n_updates_per_train 5 --batch_size 1024 --lr 0.001 --actor rnn --critic rnn --tag C-cont-rnn-ac-comm --no_render --overwrite discrete_action_space-bool-false agent_silence-bool-false"
+srun -p cpu --gres=gpu:0 -c 4 --mem=8G "python algorithms/rmaddpg/run_rmaddpg.py --sub_dir normal --scenario partial_spread --env_config mpe_hierarchy/configs/partial_spread.yaml --use_tensorboard --n_episodes 1000000 --seed 1 --n_rollout_threads 4 --sample_batch_size 8 --n_updates_per_train 5 --batch_size 1024 --lr 0.001 --actor rnn --critic rnn --tag C-cont-rnn-ac-comm --no_render --overwrite discrete_action_space-bool-false agent_silence-bool-false --constrain_out"
 
 
 

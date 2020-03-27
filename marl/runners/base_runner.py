@@ -102,7 +102,7 @@ class BaseRunner(object):
         return env_actions
 
 
-    def pack_transition(self, obs, actions, next_obs, rewards, dones, frames=None):
+    def pack_transition(self, obs, actions, next_obs, rewards, dones, frames=None, **kwargs):
         """ regroup transitions for batch builder or replay buffer
         transition_data is {obs_1: , action_1:, ..., obs_n:, action_n:, ...}
         Arguments:
@@ -165,6 +165,10 @@ class BaseRunner(object):
         # others 
         if frames is not None:
             transition["frame"] = frames
+        # hack for flexibility 
+        for k, v in kwargs:
+            assert k in self.scheme:
+            transition[k] = v
         return transition
 
 

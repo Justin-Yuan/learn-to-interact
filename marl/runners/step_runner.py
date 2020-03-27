@@ -55,7 +55,7 @@ class StepRunner(BaseRunner):
             if not getattr(self, "has_render_scheme", False):
                 self.has_render_scheme = True 
                 # get frame size dynamically & update scheme (frame is not per agent)
-                _ = self.env.reset() 
+                self.env.reset() 
                 frame = self.env.get_images()[0]
                 h, w, c = frame.shape
                 self.height = h 
@@ -79,7 +79,7 @@ class StepRunner(BaseRunner):
             for i in range(self.mac.nagents)
         }
         self.t = 0 
-        self.obs = self.env.reset()
+        self.obs, self.infos = self.env.reset()
         # if render:
         #     frames = self.env.get_images()
 
@@ -132,6 +132,7 @@ class StepRunner(BaseRunner):
 
         # Move onto the next timestep
         self.obs = next_obs
+        self.infos = infos
         self.t += 1
         if self.is_training:   # only update counter when training 
             self.t_env += self.env.nenvs

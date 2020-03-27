@@ -3,7 +3,7 @@ from agents.ddpg import DDPGAgent
 from agents.ppo import PPOAgent
 from agents.sac import SACAgent
 from agents.ddpg_moa import DDPGAgentMOA
-
+from agents.ddpg_atoc import ATOCAgent
 
 
 #####################################################################################
@@ -14,7 +14,8 @@ AGENTS_MAP = {
     "ddpg": DDPGAgent,
     "ppo": PPOAgent,
     "sac": SACAgent,
-    "ddpg_moa": DDPGAgentMOA
+    "ddpg_moa": DDPGAgentMOA,
+    "ddpg_atoc": ATOCAgent
 }
 
 
@@ -24,5 +25,6 @@ __all__ = [
     "DDPGAgent",
     "PPOAgent",
     "SACAgent",
-    "DDPGAgentMOA"
+    "DDPGAgentMOA",
+    "ATOCAgent"
 ]

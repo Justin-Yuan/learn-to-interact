@@ -80,27 +80,25 @@ def make_env_hier(scenario_name, benchmark=False, show_visual_range=True, **kwar
     world = scenario.make_world(**kwargs)
     # create multiagent environment
     world_update_callback = getattr(scenario, "update_world", None)
-    
-    if benchmark:        
-        env = MultiAgentEnv(
-            world, 
-            scenario.reset_world, 
-            scenario.reward, 
-            scenario.observation, 
-            scenario.benchmark_data, 
-            render_callback=scenario.render,
-            update_callback=world_update_callback
-        )
-    else:
-        env = MultiAgentEnv(
-            world, 
-            scenario.reset_world, 
-            scenario.reward, 
-            scenario.observation,
-            render_callback=scenario.render,
-            update_callback=world_update_callback, 
-            show_visual_range=show_visual_range
-        )
+
+    info_callback = None 
+    # TODO: merge `benchmark data` with `info` in scenarios
+    if benchmark:
+        info_callback = scenario.benchmark_data
+    # only set info_callback when available in scenario
+    if hasattr(scenario, "info"):
+        info_callback = scenario.info
+
+    env = MultiAgentEnv(
+        world, 
+        scenario.reset_world, 
+        scenario.reward, 
+        scenario.observation,
+        info_callback=info_callback,
+        render_callback=scenario.render,
+        update_callback=world_update_callback, 
+        show_visual_range=show_visual_range
+    )
     return env
 
 

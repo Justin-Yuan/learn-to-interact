@@ -1,5 +1,6 @@
 from collections import defaultdict
 import torch
+import torch.nn as nn 
 from torch import Tensor
 from torch.autograd import Variable
 from torch.optim import Adam
@@ -11,6 +12,84 @@ from utils.misc import hard_update, gumbel_softmax, onehot_from_logits
 from utils.noise import OUNoise
 
 
+############################################ atoc helper stuff 
+
+class ThoughtMerger(nn.Module):
+    """ customizable functions to merge thoughts 
+    """
+    def __init__(self, mode="concat"):
+        self.mode = mode 
+        self.merge_func_map = {
+            "concat": self.concat_thoughts,
+            "average": self.average_thoughts
+        }
+        
+    def concat_thoughts(self, h_i, h_j=None):
+        if h_j == None:
+            h_j = torch.zeros_like(h_i)
+        return torch.cat([h_i, h_j], -1)
+
+    def average_thoughts(self, h_i, h_j=None):
+        return h_i if h_j is None else (h_i + h_j) / 2.0
+
+    def forward(self, h_i, h_j=None):
+        """ h_i: agent's own thought; h_j: integrated agnet thought 
+        """
+        return self.merge_func_map[self.mode](h_i, h_j)
+
+    def get_output_dim(self, input_dim):
+        return {
+            "concat": lambda x: return 2*x,
+            "average": lambda x: return x 
+        }[self.mode]
+
+
+class ATOCPolicy(nn.Module):
+    """ ATOC has a 2-stage policy with external intermediate input
+        (integrated thought vector), hence make a custom policy for it 
+    """
+    def __init__(self, num_in_pol=0, num_out_pol=0, hidden_dim=64, 
+        constrain_out=False, norm_in=False, discrete_action=True, rnn_policy=False, 
+        thought_dim=64, merge_mode="concat", **kwargs
+    ):
+        super(ATOCPolicy, self).__init__()
+
+        thought_net_func = RecurrentNetwork if rnn_policy else MLPNetwork
+        thought_net_kwargs = dict(
+            hidden_dim=hidden_dim,
+            norm_in=norm_in,
+            constrain_out=False,     # since thought is intermediate output
+            discrete_action=False,
+        )
+        self.thought_net = thought_net_func(num_in_pol, thought_dim, **thought_net_kwargs)
+
+        self.merger = ThoughtMerger(mode=merge_mode)
+        act_in_dim = self.merger.get_output_dim(thought_dim)
+
+        action_net_kwargs = dict(
+            hidden_dim=hidden_dim,
+            norm_in=False,  # doesn't need BN on intermediate thoughts
+            constrain_out=constrain_out,
+            discrete_action=discrete_action,
+            rnn_policy=False,   # rnn already in thoguht_net if needed
+        )
+        self.action_net = Policy(act_in_dim, num_out_pol, **action_net_kwargs)
+
+    def init_hidden(self):
+        # only if `rnn_policy` is enabled, chained to `init_hidden` to rnn net
+        return self.thought_net.init_hidden()
+
+    def get_thought(self, x, h=None, **kwargs):
+        h_i, h_out = self.thought_net(x, h)
+        return h_i, h_out
+
+    def get_action(self, h_i, h_j=None):
+        merged_h = self.merger(h_i, h_j)
+        out, _ = self.action_net(merged_h)
+        return out 
+
+
+ 
 ############################################ ddpg 
 class ATOCAgent(object):
     """
@@ -19,7 +98,7 @@ class ATOCAgent(object):
     """
     def __init__(self, algo_type="MADDPG", act_space=None, obs_space=None, 
                 rnn_policy=False, rnn_critic=False, hidden_dim=64, lr=0.01,
-                norm_in=False, constrain_out=False,
+                norm_in=False, constrain_out=False, thought_dim=64,
                 env_obs_space=None, env_act_space=None, **kwargs):
         """
         Inputs:
@@ -56,17 +135,19 @@ class ATOCAgent(object):
         else:
             num_out_pol = self.get_shape(act_space)
 
+        # atoc policy 
         policy_kwargs = dict(
             hidden_dim=hidden_dim,
             norm_in=norm_in,
             constrain_out=constrain_out,
             discrete_action=self.discrete_action,
-            rnn_policy=rnn_policy
+            rnn_policy=rnn_policy,
+            thought_dim=thought_dim
         )
-        self.policy = Policy(num_in_pol, num_out_pol, **policy_kwargs)
-        self.target_policy = Policy(num_in_pol, num_out_pol, **policy_kwargs)
+        self.policy = ATOCPolicy(num_in_pol, num_out_pol, **policy_kwargs)
+        self.target_policy = ATOCPolicy(num_in_pol, num_out_pol, **policy_kwargs)
         hard_update(self.target_policy, self.policy)
-
+        
         # Critic 
         self.rnn_critic = rnn_critic
         self.critic_hidden_states = None 
@@ -91,15 +172,24 @@ class ATOCAgent(object):
         self.target_critic = critic_net_fn(num_in_critic, 1, **critic_kwargs)
         hard_update(self.target_critic, self.critic)
 
-        # thought network 
-        # TODO:   
-
-        # attention unit 
-        # TODO:  
+        # NOTE: atoc modules 
+        # attention unit, MLP (used here) or RNN, output comm probability
+        self.thought_dim = thought_dim
+        self.attention_unit = nn.Sequential(
+            MLPNetwork(thought_dim, 1, hidden_dim=hidden_dim, 
+                norm_in=norm_in, constrain_out=False), 
+            nn.Sigmoid()
+        )
+        
+        # communication channel, bi-LSTM (used here) or graph 
+        self.comm_channel = nn.LSTM(thought_dim, thought_dim, 1, 
+            batch_first=False, bidirectional=True)
 
         # Optimizers 
         self.policy_optimizer = Adam(self.policy.parameters(), lr=lr)
         self.critic_optimizer = Adam(self.critic.parameters(), lr=lr)
+        self.attention_unit_optimizer = Adam(self.attention_unit.parameters(), lr=lr)
+        self.comm_channel_optimizer = Adam(self.comm_channel.parameters(), lr=lr)
 
 
     def get_shape(self, x, key=None):
@@ -136,10 +226,6 @@ class ATOCAgent(object):
             self.policy_hidden_states = self.policy.init_hidden().expand(batch_size, -1)  
         if self.rnn_critic:
             self.critic_hidden_states = self.critic.init_hidden().expand(batch_size, -1) 
-
-    def init_state(self, batch_size):
-        """ setup for stateful rollout """
-        pass 
 
 
     def compute_value(self, vf_in, h_critic=None, target=False, truncate_steps=-1):
@@ -230,21 +316,31 @@ class ATOCAgent(object):
             }   # dict of (B,T,A)
         return act
 
+    def step_thought(self, obs):
+        """ run the first part of policy to generate thought  
+        Arguments:
+            obs: (B,O)
+        Returns:
+            thought: (B,H)
+        """
+        with torch.no_grad():
+            thought, hidden_states = self.policy.get_thought(obs, self.policy_hidden_states)
+            self.policy_hidden_states = hidden_states   # if mlp, still defafult None
+        return thought 
 
-    def step(self, obs, explore=False):
+
+    def step_action(self, h_i, h_j=None, explore=False):
         """
         Take a step forward in environment for a minibatch of observations
         equivalent to `act` or `compute_actions`
         Arguments:
-            obs: (B,O)
+            h_i, h_j: (B,H)
             explore: Whether or not to add exploration noise
         Returns:
             action: dict of actions for this agent, (B,A)
         """
-        # TODO: change to using actoin selector
         with torch.no_grad():
-            action, hidden_states = self.policy(obs, self.policy_hidden_states)
-            self.policy_hidden_states = hidden_states   # if mlp, still defafult None
+            action = self.policy.get_action(h_i, h_j)
 
             if self.discrete_action:
                 for k in action:
@@ -264,6 +360,35 @@ class ATOCAgent(object):
                     action[k] = action[k].clamp(-1, 1)
         return action
 
+    
+    def initiate_comm(self, thought_vec, binary=False):
+        """ output probability if to initiate communication
+            if binary, return 0 or 1s (used in sampling)
+        Arguments: 
+            - thought_vec: (B,H) 
+        Returns:
+            - is_comm: (B,1) 
+        """
+        is_comm = self.attention_unit(thought_vec)
+        if binary:
+            is_comm = (is_comm > 0.5).long()
+        return is_comm
+
+
+    def integrate_thoughts(self, thought_vecs)
+        """ integrate list of agent thought vectors for a communication group
+        Arguments:
+            - thought_vecs: (N,B,H)
+        Returns:
+            - out: (N,B,H)
+        """
+        ts, bs, _ = thought_vec.shape
+        # (num_layers * num_directions, batch, hidden_size)
+        h0 = torch.zeros(2, bs, self.thought_dim)
+        c0 = torch.zeros(2, bs, self.thought_dim)
+        out, (hn, cn) = self.comm_channel(thought_vecs, (h0, c0))
+        return out
+
 
     def get_params(self):
         return {
@@ -272,7 +397,12 @@ class ATOCAgent(object):
             'target_policy': self.target_policy.state_dict(),
             'target_critic': self.target_critic.state_dict(),
             'policy_optimizer': self.policy_optimizer.state_dict(),
-            'critic_optimizer': self.critic_optimizer.state_dict()
+            'critic_optimizer': self.critic_optimizer.state_dict(),
+            # atoc modules 
+            'attention_unit': self.attention_unit.state_dict(),
+            'comm_channel': self.comm_channel.state_dict()
+            'attention_unit_optimizer': self.attention_unit_optimizer.state_dict(),
+            'comm_channel_optimizer': self.comm_channel_optimizer.state_dict()
         }
 
     def load_params(self, params):
@@ -282,5 +412,10 @@ class ATOCAgent(object):
         self.target_critic.load_state_dict(params['target_critic'])
         self.policy_optimizer.load_state_dict(params['policy_optimizer'])
         self.critic_optimizer.load_state_dict(params['critic_optimizer'])
+        # atoc modules
+        self.attention_unit.load_state_dict(params['attention_unit'])
+        self.comm_channel.load_state_dict(params['comm_channel'])
+        self.attention_unit_optimizer.load_state_dict(params['attention_unit_optimizer'])
+        self.comm_channel_optimizer.load_state_dict(params['comm_channel_optimizer'])
 
     

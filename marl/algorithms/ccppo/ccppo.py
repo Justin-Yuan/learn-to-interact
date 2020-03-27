@@ -164,7 +164,7 @@ class CCPPO(object):
         return instance
 
     ############################################ NOTE: step/act
-    def step(self, observations, explore=False):
+    def step(self, observations, explore=False, **kwargs):
         """ Take a step forward in environment with all agents
         Arguments:
             observations: [(B,O)]*N, List of observations for each agent

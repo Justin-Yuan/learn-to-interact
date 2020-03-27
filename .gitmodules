@@ -5,3 +5,7 @@
 	path = marl/mpe_hierarchy
 	url = https://github.com/Justin-Yuan/mpe_hierarchy.git
 	branch = master
+[submodule "marl/multiagent_mujoco"]
+	path = marl/multiagent_mujoco
+	url = https://github.com/Justin-Yuan/multiagent_mujoco
+	branch = master

@@ -160,7 +160,7 @@ class MASAC(object):
         return instance
 
     ############################################ NOTE: step/act
-    def step(self, observations, explore=False):
+    def step(self, observations, explore=False, **kwargs):
         """ Take a step forward in environment with all agents
         Arguments:
             observations: List of observations for each agent

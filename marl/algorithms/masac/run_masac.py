@@ -16,7 +16,7 @@ from algorithms.masac import MASAC
 
 from runners.make_env import ENV_MAP
 from runners.sample_batch import EpisodeBatch
-from runners.ctde_runner import CTDERunner
+from runners.ctde_runner import CTDEEpisodeRunner
 from runners.replay_buffer import EpisodeReplayBuffer
 from utils.exp_utils import setup_experiment, ExperimentLogger, ExperimentState
 from utils.exp_utils import time_left, time_str, merge_dict
@@ -204,11 +204,11 @@ def run(args):
 
     # NOTE: make sampling runner (env wrapper)  
     scheme = get_sample_scheme(learner.nagents, env.observation_space, env.action_space)
-    runner = CTDERunner(scheme, env, learner, logger, config.sample_batch_size,
+    runner = CTDEEpisodeRunner(scheme, env, learner, logger, config.sample_batch_size,
                             config.episode_length, device=config.device, t_env=t_env,
                             ma_step_keys=["log_probs"], is_training=True)
     if not config.no_eval:
-        eval_runner = CTDERunner(scheme, eval_env, learner, logger, 
+        eval_runner = CTDEEpisodeRunner(scheme, eval_env, learner, logger, 
                             config.eval_batch_size, config.episode_length, 
                             device=config.device, t_env=t_env, 
                             ma_step_keys=["log_probs"], is_training=False)

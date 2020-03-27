@@ -56,7 +56,7 @@ class EpisodeRunner(BaseRunner):
             if not getattr(self, "has_render_scheme", False):
                 self.has_render_scheme = True 
                 # get frame size dynamically & update scheme (frame is not per agent)
-                _ = self.env.reset() 
+                self.env.reset() 
                 frame = self.env.get_images()[0]
                 h, w, c = frame.shape
                 self.height = h 
@@ -94,7 +94,7 @@ class EpisodeRunner(BaseRunner):
 
         self.t = 0
         self.mac.init_hidden(self.batch_size)
-        obs = self.env.reset()  # (B,N,O) or dict of (B,N,O)
+        obs, infos = self.env.reset()  # (B,N,O) or dict of (B,N,O)
         # # frames length is max_length + 1 
         # if render:
         #     frames = self.env.get_images()

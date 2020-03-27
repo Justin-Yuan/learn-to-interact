@@ -49,6 +49,7 @@ def get_sample_scheme(n_agents, obs_spaces, act_spaces):
 
         # atoc communication group 
         scheme["comm_group"] = {"vshape": (n_agents,n_agents), "dtype": torch.uint8}
+        scheme["is_comm"] = {"vshape": (n_agents,), "dtype": torch.uint8}
     return scheme
 
 
@@ -95,9 +96,9 @@ def make_parallel_env(env_func, env_config, batch_size, n_rollout_threads, seed)
             # do not set seed i if -1 (e.g. for evaluation)
             if seed >= 0:
                 # env.seed(seed + rank * 1000)
-                random.seed(seed + rank * 1000)
+                # random.seed(seed + rank * 1000)
                 np.random.seed(seed + rank * 1000)
-                torch.manual_seed(seed + rank * 1000)
+                # torch.manual_seed(seed + rank * 1000)
                 # mpe has its own seeding 
                 env = env_func(seed=seed + rank * 1000, **env_config)
             else:
@@ -198,3 +199,49 @@ def log_weights(learner, logger, t_env):
             "critic_{}_{}".format(i, k): v for k, v in agent.critic.named_parameters()}
         logger.add_histogram_dict(agent_actor_params, t_env)
         logger.add_histogram_dict(agent_critic_params, t_env)
+
+
+#####################################################################################
+### communication helper
+####################################################################################
+
+class CommCoordinator(objet):
+    """ manager class to coordinate multi-agent communication
+    """
+    def __init__(self, nagents):
+        self.nagents = nagents
+
+    def init_comm(self, batch_size, device="cpu"):
+        self.is_comm = torch.zeros(batch_size, self.nagents).long().to(device)
+        self.comm_group = torch.zeros(batch_size, self.nagents, self.nagents).long().to(device)
+        self.comm_count = torch.zeros(batch_size, self.nagents).long().to(device)
+
+    def make_comm_group(self, is_comm, info, cur_comm_group, cur_is_comm):
+        """ strategy to form communication groups (for 1 sample in batch)
+        Arguments:
+            - is_comm: binary tensor, (N,)
+            - imfo: dict of env returned info 
+                - {"n": {"sorted_agents": ...}} 
+            - cur_comm_group: (N,N) current communication group
+            - cur_is_comm: (N,) current communication status 
+        Returns: 
+            - 
+        """
+        # order initiator
+        initiator_index = is_comm.nonzero(as_tuple=True)[0].tolist()
+        initiator_index = np.random.permutation(initiator_index)
+        # select cooperators 
+
+        ## filter based on proximity 
+
+        ## non-initiator, non-others-selected cooperator 
+
+        ## others-selected cooperator
+
+        ## other initiator  
+
+        # collect outputs 
+
+
+
+
